@@ -136,3 +136,42 @@ python -m app.bot.main
 по `docs/RUNBOOK.md`. Код тот же самый — меняется только `.env`
 (`LOCAL_MODE=false`, адрес домена, пароли), после чего бот начинает
 работать с Postgres, Redis и Marzban.
+
+---
+
+# 🖥 Запуск бота на VPS (первый шаг деплоя)
+
+Если хотите, чтобы бот работал круглосуточно, но панель Marzban ещё не
+настроена — поднимите на сервере только бота. Нужен VPS с Docker.
+
+```bash
+# 1. Папка проекта и код
+mkdir -p ~/salt-bot && cd ~/salt-bot
+git clone https://github.com/xxxmaxxxq/practice.git repo
+cd repo/vpn-service-project
+
+# 2. Настройки (если .env уже создавали в ~/salt-bot — просто скопируйте его сюда)
+cp ~/salt-bot/.env .env 2>/dev/null || cp .env.example .env
+nano .env        # BOT_TOKEN, BOT_USERNAME, ADMIN_IDS
+
+# 3. Запуск
+docker compose -f docker/docker-compose.bot-only.yml --env-file .env up -d --build
+
+# 4. Проверка
+docker compose -f docker/docker-compose.bot-only.yml logs -f
+```
+
+В логах должно появиться `Бот запущен: @ваш_бот (режим polling)`.
+Бот переживает перезагрузку сервера (`restart: unless-stopped`), база лежит
+в томе `botdata` и не теряется при пересборке образа.
+
+| Задача | Команда (из папки `repo/vpn-service-project`) |
+|---|---|
+| Логи | `docker compose -f docker/docker-compose.bot-only.yml logs -f` |
+| Перезапуск после правки текстов/цен | `docker compose -f docker/docker-compose.bot-only.yml restart` |
+| Обновить код с GitHub | `git pull && docker compose -f docker/docker-compose.bot-only.yml up -d --build` |
+| Остановить | `docker compose -f docker/docker-compose.bot-only.yml down` |
+
+Когда дойдёте до настоящих VPN-ключей — переходите на полный стек
+(`docker-compose.yml` + домен + ноды) по [`RUNBOOK.md`](RUNBOOK.md).
+Код тот же, меняется только `.env` и compose-файл.

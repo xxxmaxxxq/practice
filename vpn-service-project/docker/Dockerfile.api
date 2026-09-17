@@ -27,8 +27,12 @@ COPY apps/api-server/ ./
 COPY config/ /config/
 COPY apps/client-apps/ /apps/client-apps/
 
-# Запускаемся не от root
-RUN useradd --create-home --shell /bin/bash appuser && chown -R appuser:appuser /app
+# Запускаемся не от root. /data — каталог для базы в режиме одного бота
+# (docker-compose.bot-only.yml монтирует туда том), права нужны заранее,
+# иначе контейнер не сможет создать файл базы.
+RUN useradd --create-home --shell /bin/bash appuser \
+    && mkdir -p /data \
+    && chown -R appuser:appuser /app /data
 USER appuser
 
 EXPOSE 8000
