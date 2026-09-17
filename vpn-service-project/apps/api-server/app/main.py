@@ -7,6 +7,7 @@ FastAPI-приложение: вебхуки платежей, ссылка-по
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings, tariff_by_code
+from app.config import PROJECT_ROOT, get_settings, tariff_by_code
 from app.db import close_connections, get_redis, get_session
 from app.models import Payment, User
 from app.payments.registry import get_provider
@@ -38,7 +39,9 @@ from app.utils.security import verify_telegram_init_data
 log = logging.getLogger(__name__)
 settings = get_settings()
 
-MINIAPP_DIR = Path(__file__).resolve().parents[2] / "client-apps" / "miniapp"
+# Каталог Mini App: в контейнере задаётся переменной MINIAPP_DIR,
+# при локальном запуске берётся из исходников
+MINIAPP_DIR = Path(os.getenv("MINIAPP_DIR") or PROJECT_ROOT / "apps" / "client-apps" / "miniapp")
 
 
 @asynccontextmanager

@@ -12,15 +12,30 @@
 from __future__ import annotations
 
 import functools
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Корень монорепозитория: .../vpn-service-project
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-CONFIG_DIR = PROJECT_ROOT / "config"
+
+def _find_project_root() -> Path:
+    """
+    Найти корень проекта — папку, в которой лежит config/tariffs.yml.
+
+    Так код работает одинаково и при запуске из исходников, и в контейнере,
+    где файлы разложены по другим путям. Переменная окружения CONFIG_DIR
+    (задаётся в Dockerfile) имеет приоритет.
+    """
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "config" / "tariffs.yml").exists():
+            return parent
+    return Path("/")
+
+
+PROJECT_ROOT = _find_project_root()
+CONFIG_DIR = Path(os.getenv("CONFIG_DIR") or PROJECT_ROOT / "config")
 
 
 class Settings(BaseSettings):
