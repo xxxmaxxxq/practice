@@ -154,11 +154,11 @@ cd repo/vpn-service-project
 cp ~/salt-bot/.env .env 2>/dev/null || cp .env.example .env
 nano .env        # BOT_TOKEN, BOT_USERNAME, ADMIN_IDS
 
-# 3. Запуск
-docker compose -f docker/docker-compose.bot-only.yml --env-file .env up -d --build
+# 3. Запуск (скрипт сам соберёт образ и покажет лог)
+bash scripts/deploy-bot.sh
 
-# 4. Проверка
-docker compose -f docker/docker-compose.bot-only.yml logs -f
+# 4. Смотреть логи дальше
+bash scripts/deploy-bot.sh logs
 ```
 
 В логах должно появиться `Бот запущен: @ваш_бот (режим polling)`.
@@ -167,10 +167,15 @@ docker compose -f docker/docker-compose.bot-only.yml logs -f
 
 | Задача | Команда (из папки `repo/vpn-service-project`) |
 |---|---|
-| Логи | `docker compose -f docker/docker-compose.bot-only.yml logs -f` |
-| Перезапуск после правки текстов/цен | `docker compose -f docker/docker-compose.bot-only.yml restart` |
-| Обновить код с GitHub | `git pull && docker compose -f docker/docker-compose.bot-only.yml up -d --build` |
-| Остановить | `docker compose -f docker/docker-compose.bot-only.yml down` |
+| Логи | `bash scripts/deploy-bot.sh logs` |
+| Перезапуск после правки текстов/цен | `bash scripts/deploy-bot.sh restart` |
+| Обновить код с GitHub | `bash scripts/deploy-bot.sh update` |
+| Что запущено | `bash scripts/deploy-bot.sh status` |
+| Остановить | `bash scripts/deploy-bot.sh stop` |
+
+> Скрипт сделан без флагов в вызове намеренно: длинные docker-команды часто
+> ломаются при копировании из браузера — обычный дефис `-` превращается в
+> типографский минус `−`, и docker отвечает `unknown shorthand flag`.
 
 Когда дойдёте до настоящих VPN-ключей — переходите на полный стек
 (`docker-compose.yml` + домен + ноды) по [`RUNBOOK.md`](RUNBOOK.md).
