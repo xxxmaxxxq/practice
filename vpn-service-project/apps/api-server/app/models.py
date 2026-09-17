@@ -12,6 +12,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -26,6 +27,40 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
+
+# На проде — JSONB (быстрее и индексируется), при локальном запуске на SQLite —
+# обычный JSON. Один и тот же код работает в обоих случаях.
+JSONType = JSON().with_variant(JSONB(), "postgresql")
+
+# Первичный ключ: BIGINT на Postgres. SQLite умеет автоинкремент только для
+# INTEGER PRIMARY KEY, поэтому там используется INTEGER — на объёмы локального
+# режима этого с запасом достаточно.
+PkType = BigInteger().with_variant(Integer(), "sqlite")
+
+
+class UtcDateTime(TypeDecorator):
+    """
+    Дата и время, всегда с таймзоной UTC.
+
+    Зачем: Postgres в timestamptz таймзону хранит, а SQLite — нет, и при
+    локальном запуске из базы возвращалось «наивное» время. Сравнение такого
+    времени с now(UTC) роняет код (TypeError). Этот тип гарантирует, что из
+    базы всегда приходит время с таймзоной, в какой бы СУБД оно ни лежало.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
+
+    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
 
 
 def utcnow() -> datetime:
@@ -39,10 +74,10 @@ class Base(DeclarativeBase):
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        UtcDateTime, server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+        UtcDateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 
@@ -85,7 +120,7 @@ class NotificationKind(StrEnum):
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
     username: Mapped[str | None] = mapped_column(String(64))
     first_name: Mapped[str | None] = mapped_column(String(128))
@@ -123,7 +158,7 @@ class Subscription(Base, TimestampMixin):
     __tablename__ = "subscriptions"
     __table_args__ = (Index("ix_subscriptions_status_expires", "status", "expires_at"),)
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -132,7 +167,7 @@ class Subscription(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(16), default=SubscriptionStatus.TRIAL, nullable=False
     )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     is_trial: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     device_limit: Mapped[int] = mapped_column(SmallInteger, default=2, nullable=False)
@@ -143,7 +178,7 @@ class Subscription(Base, TimestampMixin):
     # Пауза
     pause_days_used: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
     pause_year: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paused_until: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
     traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
@@ -171,7 +206,7 @@ class Payment(Base, TimestampMixin):
         UniqueConstraint("provider", "external_id", name="uq_payments_provider_external"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -187,8 +222,8 @@ class Payment(Base, TimestampMixin):
     days_granted: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
     promo_code: Mapped[str | None] = mapped_column(String(32))
 
-    payload: Mapped[dict | None] = mapped_column(JSONB)
-    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[dict | None] = mapped_column(JSONType)
+    paid_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
     user: Mapped[User] = relationship(back_populates="payments", lazy="selectin")
 
@@ -199,7 +234,7 @@ class Payment(Base, TimestampMixin):
 class Node(Base, TimestampMixin):
     __tablename__ = "nodes"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     code: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
     location: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
     host: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -211,26 +246,26 @@ class Node(Base, TimestampMixin):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     current_sni: Mapped[str | None] = mapped_column(String(128))
-    sni_pool: Mapped[list | None] = mapped_column(JSONB)
-    backup_ports: Mapped[list | None] = mapped_column(JSONB)
+    sni_pool: Mapped[list | None] = mapped_column(JSONType)
+    backup_ports: Mapped[list | None] = mapped_column(JSONType)
 
     users_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    last_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_check_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     last_latency_ms: Mapped[int | None] = mapped_column(Integer)
 
 
 class HealthEvent(Base):
     __tablename__ = "health_events"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     node_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("nodes.id", ondelete="CASCADE"), index=True, nullable=False
     )
     event: Mapped[str] = mapped_column(String(32), nullable=False)
     action: Mapped[str | None] = mapped_column(String(64))
-    details: Mapped[dict | None] = mapped_column(JSONB)
+    details: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        UtcDateTime, server_default=func.now(), nullable=False
     )
 
 
@@ -240,7 +275,7 @@ class HealthEvent(Base):
 class Referral(Base):
     __tablename__ = "referrals"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     referrer_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -249,10 +284,10 @@ class Referral(Base):
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     is_qualified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    qualified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    qualified_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     reward_granted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        UtcDateTime, server_default=func.now(), nullable=False
     )
 
 
@@ -266,13 +301,13 @@ class Notification(Base):
         UniqueConstraint("subscription_id", "kind", name="uq_notifications_sub_kind"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     subscription_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("subscriptions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     sent_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        UtcDateTime, server_default=func.now(), nullable=False
     )
 
 
@@ -282,13 +317,13 @@ class Notification(Base):
 class PausePeriod(Base):
     __tablename__ = "pause_periods"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     subscription_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("subscriptions.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    planned_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    planned_until: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     days_requested: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     days_actual: Mapped[int | None] = mapped_column(SmallInteger)
 
@@ -299,13 +334,13 @@ class PausePeriod(Base):
 class PromoCode(Base, TimestampMixin):
     __tablename__ = "promo_codes"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(PkType, primary_key=True)
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
     discount_percent: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
     bonus_days: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
     max_uses: Mapped[int | None] = mapped_column(Integer)
     used_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_until: Mapped[datetime | None] = mapped_column(UtcDateTime)
     # Персональный оффер (например, таймер-скидка в конце триала)
     is_personal_for_user_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True

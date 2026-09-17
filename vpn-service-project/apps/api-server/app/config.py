@@ -109,10 +109,19 @@ class Settings(BaseSettings):
     # ── Бэкапы ─────────────────────────────────────────────────────────────
     backup_enabled: bool = False
 
+    # ── Локальный режим (запуск на своём компьютере, без серверов) ─────────
+    # LOCAL_MODE=true: база — файл SQLite, состояния бота — в памяти,
+    # Postgres, Redis и Marzban не нужны. Годится, чтобы посмотреть и
+    # отладить интерфейс бота; ключи VPN при этом не выдаются.
+    local_mode: bool = False
+    sqlite_path: str = "vpn_local.sqlite3"
+
     # ── Производные значения ───────────────────────────────────────────────
     @property
     def database_url(self) -> str:
-        """DSN для SQLAlchemy (async-драйвер asyncpg)."""
+        """DSN для SQLAlchemy: SQLite в локальном режиме, иначе Postgres."""
+        if self.local_mode:
+            return f"sqlite+aiosqlite:///{self.sqlite_path}"
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

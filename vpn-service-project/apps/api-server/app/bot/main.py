@@ -14,12 +14,13 @@ import asyncio
 import logging
 
 from aiogram import Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 
 from app.bot.handlers import router
 from app.bot.notifications import create_bot
 from app.config import get_settings
-from app.db import close_connections
+from app.db import close_connections, create_all_tables
 from app.utils.logging_setup import setup_logging
 
 log = logging.getLogger(__name__)
@@ -28,12 +29,16 @@ settings = get_settings()
 
 def build_dispatcher() -> Dispatcher:
     """
-    Диспетчер с хранилищем состояний в Redis.
+    Диспетчер с хранилищем состояний.
 
-    Redis вместо памяти нужен, чтобы диалоги не терялись при перезапуске
-    контейнера и работали при нескольких копиях бота.
+    На проде состояния лежат в Redis: диалоги не теряются при перезапуске
+    контейнера и работают при нескольких копиях бота. В локальном режиме
+    Redis не нужен — состояния держим в памяти процесса.
     """
-    storage = RedisStorage.from_url(settings.redis_url)
+    if settings.local_mode:
+        storage = MemoryStorage()
+    else:
+        storage = RedisStorage.from_url(settings.redis_url)
     dispatcher = Dispatcher(storage=storage)
     dispatcher.include_router(router)
     return dispatcher
@@ -41,6 +46,18 @@ def build_dispatcher() -> Dispatcher:
 
 async def main() -> None:
     setup_logging("bot")
+
+    if settings.local_mode:
+        # Локальный запуск: создаём таблицы в файле SQLite, чтобы бот
+        # стартовал одной командой, без Postgres и миграций
+        await create_all_tables()
+        log.warning(
+            "ЛОКАЛЬНЫЙ РЕЖИМ: база %s, состояния в памяти. "
+            "Интерфейс бота работает полностью; ключи VPN не выдаются, "
+            "пока не подключена панель Marzban.",
+            settings.sqlite_path,
+        )
+
     bot = create_bot()
     dispatcher = build_dispatcher()
 

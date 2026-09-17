@@ -46,7 +46,21 @@
 
 ---
 
-## 🚀 Быстрый старт (локально, 3 команды)
+## 🚀 Посмотреть бота прямо сейчас (без сервера)
+
+Нужен только Python и токен бота — ни VPS, ни домена, ни Docker:
+
+```bash
+cp .env.example .env     # впишите BOT_TOKEN, BOT_USERNAME, ADMIN_IDS
+bash scripts/run-local.sh
+```
+
+Бот поднимется на SQLite в режиме polling, и весь интерфейс будет работать.
+Пошагово, включая Windows — [`docs/QUICKSTART_LOCAL.md`](docs/QUICKSTART_LOCAL.md).
+
+---
+
+## 🐳 Полный стек локально (Docker, 3 команды)
 
 ```bash
 git clone https://github.com/xxxmaxxxq/practice.git
@@ -56,8 +70,6 @@ cp .env.example .env        # заполните BOT_TOKEN и пароли
 make up                     # поднимет postgres, redis, api, bot
 make migrate                # создаст таблицы в БД
 ```
-
-Бот запустится в режиме polling — VPS и домен для локальной разработки не нужны.
 
 Развёртывание на боевом сервере — пошагово в [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 

@@ -57,13 +57,18 @@ class MarzbanClient:
     # ── Авторизация ────────────────────────────────────────────────────────
 
     async def _login(self) -> str:
-        resp = await self._client.post(
-            "/api/admin/token",
-            data={
-                "username": settings.marzban_username,
-                "password": settings.marzban_password,
-            },
-        )
+        try:
+            resp = await self._client.post(
+                "/api/admin/token",
+                data={
+                    "username": settings.marzban_username,
+                    "password": settings.marzban_password,
+                },
+            )
+        except httpx.HTTPError as err:
+            # Панель недоступна (не поднята, сеть, DNS) — превращаем сетевую
+            # ошибку в MarzbanError, чтобы вызывающий код обработал её штатно
+            raise MarzbanError(f"Панель Marzban недоступна: {err}") from err
         if resp.status_code != 200:
             raise MarzbanError(f"Не удалось авторизоваться в Marzban: {resp.status_code}")
         self._token = resp.json()["access_token"]
@@ -74,14 +79,30 @@ class MarzbanClient:
             await self._login()
         return {"Authorization": f"Bearer {self._token}"}
 
+    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        """
+        Запрос к панели.
+
+        Любая сетевая ошибка (панель не поднята, DNS, таймаут) превращается
+        в MarzbanError. Это важно: бизнес-логика ловит именно MarzbanError и
+        продолжает работать без панели — подписка в нашей базе обновится,
+        а синхронизация с Xray повторится, когда панель вернётся.
+        """
+        try:
+            return await self._request_raw(method, path, **kwargs)
+        except MarzbanError:
+            raise
+        except httpx.HTTPError as err:
+            raise MarzbanError(f"Панель Marzban недоступна: {err}") from err
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=8),
         retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
         reraise=True,
     )
-    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """Запрос с автоперелогином при 401 и ретраями при сетевых сбоях."""
+    async def _request_raw(self, method: str, path: str, **kwargs: Any) -> Any:
+        """Сам запрос: автоперелогин при 401 и ретраи при сетевых сбоях."""
         headers = await self._headers()
         resp = await self._client.request(method, path, headers=headers, **kwargs)
 

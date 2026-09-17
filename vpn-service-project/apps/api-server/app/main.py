@@ -10,6 +10,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -130,6 +131,69 @@ async def subscription(token: str, request: Request, session: AsyncSession = Dep
             "Profile-Update-Interval": "6",
             "Profile-Title": "VPN Service",
         },
+    )
+
+
+# ── Страница импорта подписки в приложение ─────────────────────────────────
+
+IMPORT_PAGE = """<!DOCTYPE html>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Подключение VPN</title>
+<style>
+ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+      background:#0f172a;color:#e2e8f0;margin:0;padding:32px 20px;text-align:center}}
+ h1{{font-size:20px;margin:0 0 8px}} p{{color:#94a3b8;font-size:14px;line-height:1.5}}
+ .a{{display:block;background:#2481cc;color:#fff;text-decoration:none;padding:16px;
+     border-radius:12px;font-weight:600;margin:10px auto;max-width:420px}}
+ .g{{background:#1e293b;color:#e2e8f0}}
+ code{{display:block;background:#1e293b;padding:12px;border-radius:10px;
+       word-break:break-all;font-size:12px;margin:16px auto;max-width:420px}}
+</style></head><body>
+<h1>⚡ Подключаем VPN</h1>
+<p>Сейчас откроется приложение и добавит подписку.<br>
+Если этого не произошло — выберите приложение вручную.</p>
+<a class="a" href="happ://import/{sub}">Открыть в Happ</a>
+<a class="a g" href="hiddify://import/{sub_enc}">Открыть в Hiddify</a>
+<a class="a g" href="v2raytun://import/{sub}">Открыть в v2RayTun</a>
+<a class="a g" href="streisand://import/{sub_enc}">Открыть в Streisand (iOS)</a>
+<p>Приложения ещё нет? Установите Happ:<br>
+<a style="color:#60a5fa" href="{ios}">App Store</a> ·
+<a style="color:#60a5fa" href="{android}">Google Play</a></p>
+<p>Ссылка-подписка (для ручного добавления):</p>
+<code>{sub}</code>
+<script>
+ // Пробуем открыть приложение сразу: на телефоне это экономит один тап
+ setTimeout(function(){{ location.href = "{first}"; }}, 400);
+</script>
+</body></html>"""
+
+
+@app.get("/i/{token}", response_class=HTMLResponse)
+async def import_page(token: str, app: str = "happ", session: AsyncSession = Depends(get_session)):
+    """
+    Страница импорта подписки.
+
+    Нужна потому, что Telegram разрешает в кнопках только http(s)-адреса:
+    схему happ://import/... в кнопку поставить нельзя. Кнопка ведёт сюда,
+    а страница уже открывает приложение — и остаётся запасной вариант,
+    если приложение не установлено или это десктоп.
+    """
+    result = await session.execute(select(User).where(User.subscription_token == token))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    sub_url = f"{settings.public_base_url.rstrip('/')}/sub/{token}"
+    links = deeplink.all_links(sub_url)
+    return HTMLResponse(
+        IMPORT_PAGE.format(
+            sub=sub_url,
+            sub_enc=quote(sub_url, safe=""),
+            first=links.get(app, links["happ"]),
+            ios=deeplink.APP_STORES["happ_ios"],
+            android=deeplink.APP_STORES["happ_android"],
+        )
     )
 
 

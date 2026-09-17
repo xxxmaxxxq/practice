@@ -45,15 +45,29 @@ def start_returning_user() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def _https_ready() -> bool:
+    """
+    Можно ли ставить в кнопку ссылку на наш домен.
+
+    Telegram принимает в inline-кнопках только полноценные http(s)-адреса,
+    поэтому при локальном запуске (http://localhost) кнопку-ссылку не
+    показываем — вместо неё бот отдаёт ссылку текстом.
+    """
+    return settings.public_base_url.startswith("https://")
+
+
 def connect_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
     """
     Кнопки подключения.
 
-    Первая — deep link в Happ: одно нажатие, и подписка уже в приложении.
+    Первая — импорт в приложение: одно нажатие, и подписка уже в Happ.
     Именно эта кнопка снимает главный барьер онбординга.
     """
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text=_btn("connect"), url=deeplink.happ(subscription_url)))
+    if _https_ready():
+        kb.row(
+            InlineKeyboardButton(text=_btn("connect"), url=deeplink.import_page(subscription_url))
+        )
     kb.row(InlineKeyboardButton(text=_btn("other_app"), callback_data="connect:apps"))
     kb.row(InlineKeyboardButton(text=_btn("instruction"), callback_data="connect:help"))
     kb.row(InlineKeyboardButton(text=_btn("copy_link"), callback_data="connect:link"))
@@ -61,11 +75,13 @@ def connect_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
 
 
 def other_apps_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
-    links = deeplink.all_links(subscription_url)
+    """Все приложения ведут на ту же страницу импорта — она сама их различает."""
+    page = deeplink.import_page(subscription_url)
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="Hiddify", url=links["hiddify"]))
-    kb.row(InlineKeyboardButton(text="v2RayTun", url=links["v2raytun"]))
-    kb.row(InlineKeyboardButton(text="Streisand (iOS)", url=links["streisand"]))
+    if _https_ready():
+        kb.row(InlineKeyboardButton(text="Hiddify", url=f"{page}?app=hiddify"))
+        kb.row(InlineKeyboardButton(text="v2RayTun", url=f"{page}?app=v2raytun"))
+        kb.row(InlineKeyboardButton(text="Streisand (iOS)", url=f"{page}?app=streisand"))
     kb.row(InlineKeyboardButton(text=_btn("back"), callback_data="connect:show"))
     return kb.as_markup()
 
@@ -165,7 +181,12 @@ def pause_days_keyboard(max_days: int) -> InlineKeyboardMarkup:
 
 def healing_result_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text=_btn("refresh_sub"), url=deeplink.happ(subscription_url)))
+    if _https_ready():
+        kb.row(
+            InlineKeyboardButton(
+                text=_btn("refresh_sub"), url=deeplink.import_page(subscription_url)
+            )
+        )
     kb.row(InlineKeyboardButton(text=_btn("support"), callback_data="support:contact"))
     kb.row(InlineKeyboardButton(text=_btn("back"), callback_data="account:show"))
     return kb.as_markup()

@@ -18,14 +18,26 @@ from app.config import get_settings
 
 settings = get_settings()
 
-engine = create_async_engine(
-    settings.database_url,
-    echo=False,
-    pool_size=20,  # запас на 1000 пользователей с большим запасом
-    max_overflow=10,
-    pool_pre_ping=True,  # проверять живость соединения перед выдачей из пула
-    pool_recycle=1800,  # пересоздавать соединения раз в 30 минут
-)
+
+def _engine_kwargs() -> dict:
+    """
+    Параметры движка.
+
+    У SQLite нет пула соединений в привычном смысле, поэтому настройки пула
+    применяются только к Postgres — иначе локальный запуск падает с ошибкой.
+    """
+    if settings.local_mode:
+        return {"echo": False}
+    return {
+        "echo": False,
+        "pool_size": 20,  # запас на 1000 пользователей с большим запасом
+        "max_overflow": 10,
+        "pool_pre_ping": True,  # проверять живость соединения перед выдачей
+        "pool_recycle": 1800,  # пересоздавать соединения раз в 30 минут
+    }
+
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs())
 
 SessionFactory = async_sessionmaker(
     engine,
@@ -79,3 +91,16 @@ async def close_connections() -> None:
         await _redis.aclose()
         _redis = None
     await engine.dispose()
+
+
+async def create_all_tables() -> None:
+    """
+    Создать таблицы напрямую, без Alembic.
+
+    Используется только в локальном режиме (SQLite), чтобы бот запускался
+    одной командой. На проде схемой управляют миграции: make migrate.
+    """
+    from app.models import Base
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)

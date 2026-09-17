@@ -46,3 +46,15 @@ def all_links(subscription_url: str) -> dict[str, str]:
         "v2raytun": v2raytun(subscription_url),
         "streisand": streisand(subscription_url),
     }
+
+
+def import_page(subscription_url: str) -> str:
+    """
+    https-адрес страницы импорта для кнопки в Telegram.
+
+    Зачем нужен: Telegram разрешает в inline-кнопках только http/https,
+    поэтому ссылку вида happ://import/... в кнопку поставить нельзя.
+    Кнопка ведёт на нашу страницу, а она уже открывает приложение
+    и показывает запасные варианты, если оно не установлено.
+    """
+    return subscription_url.replace("/sub/", "/i/", 1)

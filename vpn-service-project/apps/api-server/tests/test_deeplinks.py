@@ -29,3 +29,17 @@ def test_stars_conversion_rounds_up():
 
 def test_stars_never_zero():
     assert StarsProvider.rub_to_stars(0) >= 1
+
+
+def test_import_page_replaces_sub_path():
+    """Кнопка Telegram должна вести на https-страницу, а не на happ://."""
+    from app.utils.deeplink import import_page
+
+    assert import_page(SUB_URL) == "https://vpn.example.com/i/abc123"
+
+
+def test_import_page_replaces_only_first_occurrence():
+    url = "https://vpn.example.com/sub/tok_sub_1"
+    from app.utils.deeplink import import_page
+
+    assert import_page(url) == "https://vpn.example.com/i/tok_sub_1"
