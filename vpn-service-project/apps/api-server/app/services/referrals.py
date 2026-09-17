@@ -126,7 +126,8 @@ async def on_first_payment(session: AsyncSession, user: User) -> tuple[User | No
 
         log.info(
             "Реферальный слот выдан: tg=%s теперь имеет %s доп. слотов",
-            referrer.telegram_id, deserved_slots,
+            referrer.telegram_id,
+            deserved_slots,
         )
 
     return referrer, slot_granted

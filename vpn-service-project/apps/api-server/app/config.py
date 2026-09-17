@@ -121,9 +121,7 @@ class Settings(BaseSettings):
 def _load_yaml(name: str) -> dict[str, Any]:
     path = CONFIG_DIR / name
     if not path.exists():
-        raise FileNotFoundError(
-            f"Не найден конфиг {path}. Проверьте, что папка config/ на месте."
-        )
+        raise FileNotFoundError(f"Не найден конфиг {path}. Проверьте, что папка config/ на месте.")
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 

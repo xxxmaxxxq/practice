@@ -127,7 +127,12 @@ async def create_order(
 
     log.info(
         "Заказ #%s: tg=%s %s на %s мес = %s ₽ (скидка %s%%)",
-        payment.id, user.telegram_id, tariff_code, months, amount, discount,
+        payment.id,
+        user.telegram_id,
+        tariff_code,
+        months,
+        amount,
+        discount,
     )
     return payment, amount
 

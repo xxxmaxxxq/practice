@@ -43,17 +43,18 @@ def render_account(user: User, devices_online: int = 0) -> str:
         from app.services.subscriptions import calc_streak_bonus
 
         _, next_bonus = calc_streak_bonus(subscription)
-        streak_line = text(
-            "streak_line",
-            streak=subscription.streak_count,
-            bonus=max(next_bonus, 1),
-        ) + "\n"
+        streak_line = (
+            text(
+                "streak_line",
+                streak=subscription.streak_count,
+                bonus=max(next_bonus, 1),
+            )
+            + "\n"
+        )
 
     pause_line = ""
     if not subscription.is_trial:
-        pause_line = text(
-            "pause_line", pause_left=sub_service.pause_days_left(subscription)
-        ) + "\n"
+        pause_line = text("pause_line", pause_left=sub_service.pause_days_left(subscription)) + "\n"
 
     return text(
         "account_active",
@@ -94,8 +95,7 @@ async def _send_account(telegram_id: int, message: Message) -> None:
         await sub_service.refresh_traffic(session, user)
         body = render_account(user)
         is_paused = (
-            user.subscription is not None
-            and user.subscription.status == SubscriptionStatus.PAUSED
+            user.subscription is not None and user.subscription.status == SubscriptionStatus.PAUSED
         )
         has_sub = user.subscription is not None
 

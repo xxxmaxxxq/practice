@@ -59,8 +59,8 @@ async def main() -> None:
             )
             log.info("Webhook установлен: %s", webhook_url)
             # Процесс остаётся живым: он обслуживает воркер-задачи бота
-            while True:
-                await asyncio.sleep(3600)
+            # Держим процесс живым до сигнала остановки
+            await asyncio.Event().wait()
         else:
             await bot.delete_webhook(drop_pending_updates=True)
             await dispatcher.start_polling(bot)

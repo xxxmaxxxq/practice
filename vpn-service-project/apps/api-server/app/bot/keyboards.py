@@ -53,9 +53,7 @@ def connect_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
     Именно эта кнопка снимает главный барьер онбординга.
     """
     kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text=_btn("connect"), url=deeplink.happ(subscription_url))
-    )
+    kb.row(InlineKeyboardButton(text=_btn("connect"), url=deeplink.happ(subscription_url)))
     kb.row(InlineKeyboardButton(text=_btn("other_app"), callback_data="connect:apps"))
     kb.row(InlineKeyboardButton(text=_btn("instruction"), callback_data="connect:help"))
     kb.row(InlineKeyboardButton(text=_btn("copy_link"), callback_data="connect:link"))
@@ -75,7 +73,9 @@ def other_apps_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
 # ── Кабинет ────────────────────────────────────────────────────────────────
 
 
-def account_keyboard(is_paused: bool = False, has_subscription: bool = True) -> InlineKeyboardMarkup:
+def account_keyboard(
+    is_paused: bool = False, has_subscription: bool = True
+) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=_btn("extend"), callback_data="buy:menu")
     if has_subscription:
@@ -165,9 +165,7 @@ def pause_days_keyboard(max_days: int) -> InlineKeyboardMarkup:
 
 def healing_result_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text=_btn("refresh_sub"), url=deeplink.happ(subscription_url))
-    )
+    kb.row(InlineKeyboardButton(text=_btn("refresh_sub"), url=deeplink.happ(subscription_url)))
     kb.row(InlineKeyboardButton(text=_btn("support"), callback_data="support:contact"))
     kb.row(InlineKeyboardButton(text=_btn("back"), callback_data="account:show"))
     return kb.as_markup()

@@ -21,10 +21,10 @@ settings = get_settings()
 engine = create_async_engine(
     settings.database_url,
     echo=False,
-    pool_size=20,          # запас на 1000 пользователей с большим запасом
+    pool_size=20,  # запас на 1000 пользователей с большим запасом
     max_overflow=10,
-    pool_pre_ping=True,    # проверять живость соединения перед выдачей из пула
-    pool_recycle=1800,     # пересоздавать соединения раз в 30 минут
+    pool_pre_ping=True,  # проверять живость соединения перед выдачей из пула
+    pool_recycle=1800,  # пересоздавать соединения раз в 30 минут
 )
 
 SessionFactory = async_sessionmaker(

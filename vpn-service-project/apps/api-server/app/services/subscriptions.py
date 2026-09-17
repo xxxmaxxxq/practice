@@ -79,9 +79,7 @@ async def sync_to_marzban(
         log.error("Нет нод под тариф %s — аккаунт не синхронизирован", subscription.tariff_code)
         return None
 
-    inbounds = build_inbounds(
-        [n.location for n in nodes], [n.code for n in nodes]
-    )
+    inbounds = build_inbounds([n.location for n in nodes], [n.code for n in nodes])
     device_limit = user_service.effective_device_limit(user, subscription)
 
     try:
@@ -201,7 +199,12 @@ async def extend(
 
     log.info(
         "Продление tg=%s тариф=%s дней=%s (база %s + бонус %s + streak %s) до %s",
-        user.telegram_id, tariff_code, total_days, base_days, extra_days, streak_bonus,
+        user.telegram_id,
+        tariff_code,
+        total_days,
+        base_days,
+        extra_days,
+        streak_bonus,
         subscription.expires_at.date(),
     )
     return subscription, total_days

@@ -42,7 +42,7 @@ HEALING_STEPS = ["sni_switch", "port_switch", "hysteria_promote", "node_failover
 # ── Проверка доступности ───────────────────────────────────────────────────
 
 
-async def tcp_probe(host: str, port: int, timeout: float) -> tuple[bool, int | None]:
+async def tcp_probe(host: str, port: int, timeout: float) -> tuple[bool, int | None]:  # noqa: ASYNC109
     """
     Проверить, отвечает ли нода на TCP-соединение.
 
@@ -52,9 +52,7 @@ async def tcp_probe(host: str, port: int, timeout: float) -> tuple[bool, int | N
     """
     started = time.monotonic()
     try:
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=timeout
-        )
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
         writer.close()
         await writer.wait_closed()
         return True, int((time.monotonic() - started) * 1000)
@@ -93,7 +91,10 @@ async def check_node(session: AsyncSession, node: Node) -> bool:
         node.fail_count += 1
         log.warning(
             "Нода %s недоступна (%s подряд): tcp=%s marzban=%s",
-            node.code, node.fail_count, reachable, marzban_ok,
+            node.code,
+            node.fail_count,
+            reachable,
+            marzban_ok,
         )
 
     await session.flush()
@@ -242,11 +243,13 @@ async def _step_hysteria_promote(session: AsyncSession, node: Node) -> dict[str,
 async def _step_node_failover(session: AsyncSession, node: Node) -> dict[str, Any]:
     """Шаг 4: увести пользователей на запасную ноду той же локации."""
     result = await session.execute(
-        select(Node).where(
+        select(Node)
+        .where(
             Node.location == node.location,
             Node.id != node.id,
             Node.status == NodeStatus.HEALTHY,
-        ).order_by(Node.users_count.asc())
+        )
+        .order_by(Node.users_count.asc())
     )
     backup = result.scalars().first()
     if backup is None:

@@ -13,7 +13,7 @@ u<telegram_id>. Смена тарифа = изменение набора inboun
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -128,7 +128,7 @@ class MarzbanClient:
             "username": username,
             "proxies": {proto: {} for proto in inbounds},
             "inbounds": inbounds,
-            "expire": int(expire_at.replace(tzinfo=timezone.utc).timestamp()),
+            "expire": int(expire_at.replace(tzinfo=UTC).timestamp()),
             "data_limit": data_limit_bytes,
             "data_limit_reset_strategy": "month",
             "status": "active",
@@ -142,7 +142,7 @@ class MarzbanClient:
 
     async def set_expire(self, username: str, expire_at: datetime) -> dict[str, Any]:
         return await self.modify_user(
-            username, expire=int(expire_at.replace(tzinfo=timezone.utc).timestamp())
+            username, expire=int(expire_at.replace(tzinfo=UTC).timestamp())
         )
 
     async def set_inbounds(self, username: str, inbounds: dict[str, list[str]]) -> dict[str, Any]:

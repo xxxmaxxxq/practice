@@ -7,9 +7,9 @@
 
 from __future__ import annotations
 
-import enum
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
@@ -30,7 +30,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 def utcnow() -> datetime:
     """Текущее время в UTC с таймзоной (наивные datetime — источник багов)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -49,27 +49,27 @@ class TimestampMixin:
 # ── Перечисления ───────────────────────────────────────────────────────────
 
 
-class SubscriptionStatus(str, enum.Enum):
+class SubscriptionStatus(StrEnum):
     TRIAL = "trial"
     ACTIVE = "active"
     PAUSED = "paused"
     EXPIRED = "expired"
 
 
-class PaymentStatus(str, enum.Enum):
+class PaymentStatus(StrEnum):
     PENDING = "pending"
     PAID = "paid"
     FAILED = "failed"
     REFUNDED = "refunded"
 
 
-class NodeStatus(str, enum.Enum):
+class NodeStatus(StrEnum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     DISABLED = "disabled"
 
 
-class NotificationKind(str, enum.Enum):
+class NotificationKind(StrEnum):
     TRIAL_OFFER = "trial_offer"
     EXPIRE_3D = "expire_3d"
     EXPIRE_1D = "expire_1d"
@@ -121,9 +121,7 @@ class User(Base, TimestampMixin):
 
 class Subscription(Base, TimestampMixin):
     __tablename__ = "subscriptions"
-    __table_args__ = (
-        Index("ix_subscriptions_status_expires", "status", "expires_at"),
-    )
+    __table_args__ = (Index("ix_subscriptions_status_expires", "status", "expires_at"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -131,7 +129,9 @@ class Subscription(Base, TimestampMixin):
     )
 
     tariff_code: Mapped[str] = mapped_column(String(32), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), default=SubscriptionStatus.TRIAL, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=SubscriptionStatus.TRIAL, nullable=False
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_trial: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

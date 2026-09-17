@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart, CommandObject
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from app.bot import keyboards as kb
@@ -90,9 +90,7 @@ async def activate_trial(callback: CallbackQuery) -> None:
 
         can_take, reason = await user_service.can_take_trial(user)
         if not can_take:
-            min_price = min(
-                calc_price(t, 1) for t in ("nl", "ru", "multi")
-            )
+            min_price = min(calc_price(t, 1) for t in ("nl", "ru", "multi"))
             await callback.message.answer(
                 text("trial_already_used", min_price=min_price),
                 reply_markup=kb.start_returning_user(),

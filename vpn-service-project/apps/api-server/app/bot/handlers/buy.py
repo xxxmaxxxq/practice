@@ -39,7 +39,8 @@ async def show_tariffs(callback: CallbackQuery) -> None:
 
     async with session_scope() as session:
         user, _ = await user_service.get_or_create(
-            session, telegram_id=callback.from_user.id,
+            session,
+            telegram_id=callback.from_user.id,
             username=callback.from_user.username,
             first_name=callback.from_user.first_name,
         )
@@ -118,7 +119,8 @@ async def create_payment(callback: CallbackQuery) -> None:
 
     async with session_scope() as session:
         user, _ = await user_service.get_or_create(
-            session, telegram_id=callback.from_user.id,
+            session,
+            telegram_id=callback.from_user.id,
             username=callback.from_user.username,
             first_name=callback.from_user.first_name,
         )
@@ -191,6 +193,8 @@ async def on_successful_stars_payment(message: Message) -> None:
         log.error("Некорректный payload Stars: %s", payload)
         return
 
+    charge_id = message.successful_payment.telegram_payment_charge_id
+
     async with session_scope() as session:
         from app.models import Payment
 
@@ -202,8 +206,8 @@ async def on_successful_stars_payment(message: Message) -> None:
         result = await billing.apply_payment(
             session,
             payment,
-            external_id=message.successful_payment.telegram_payment_charge_id,
-            raw_payload={"provider": "stars", "charge_id": message.successful_payment.telegram_payment_charge_id},
+            external_id=charge_id,
+            raw_payload={"provider": "stars", "charge_id": charge_id},
         )
 
     if result.get("already_processed"):

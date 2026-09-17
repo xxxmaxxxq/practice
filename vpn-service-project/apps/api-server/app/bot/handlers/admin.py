@@ -198,9 +198,7 @@ async def cmd_give(message: Message, command: CommandObject) -> None:
             session.add(subscription)
             await session.flush()
         else:
-            base = (
-                subscription.expires_at if subscription.expires_at > utcnow() else utcnow()
-            )
+            base = subscription.expires_at if subscription.expires_at > utcnow() else utcnow()
             subscription.expires_at = base + timedelta(days=days)
             subscription.status = SubscriptionStatus.ACTIVE
 
@@ -243,7 +241,8 @@ async def cmd_nodes(message: Message) -> None:
         lines.append(
             f"{icons.get(node.status, '⚪')} <b>{node.code}</b> ({node.location}) "
             f"{node.host}:{node.port}\n"
-            f"    задержка {latency} · сбоев подряд: {node.fail_count} · SNI: {node.current_sni or '—'}"
+            f"    задержка {latency} · сбоев подряд: {node.fail_count} · "
+            f"SNI: {node.current_sni or '—'}"
         )
 
     if events:
@@ -266,9 +265,7 @@ async def cmd_heal(message: Message, command: CommandObject) -> None:
         return
 
     async with session_scope() as session:
-        node = (
-            await session.execute(select(Node).where(Node.code == code))
-        ).scalar_one_or_none()
+        node = (await session.execute(select(Node).where(Node.code == code))).scalar_one_or_none()
         if node is None:
             await message.answer("Нода не найдена")
             return
