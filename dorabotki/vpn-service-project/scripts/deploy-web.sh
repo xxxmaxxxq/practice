@@ -89,7 +89,15 @@ plain_stop()    { docker rm -f salt_bot salt_api salt_caddy >/dev/null 2>&1 || t
 
 [[ -f "$ENV_FILE" ]] || fail "Нет файла .env"
 
-DOMAIN_URL="$(grep -E '^PUBLIC_BASE_URL=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+# "|| true" здесь обязателен: при set -euo pipefail отсутствие строки
+# в .env убивало скрипт молча, без единого сообщения
+DOMAIN_URL="$(grep -E '^PUBLIC_BASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2- \
+    | tr -d '"' | tr -d "'" || true)"
+
+if [[ -z "$DOMAIN_URL" ]]; then
+    fail "В .env нет строки PUBLIC_BASE_URL. Добавьте её:
+    echo 'PUBLIC_BASE_URL=https://ваш-домен' >> .env"
+fi
 DOMAIN="${DOMAIN_URL#https://}"
 DOMAIN="${DOMAIN#http://}"
 DOMAIN="${DOMAIN%%/*}"
