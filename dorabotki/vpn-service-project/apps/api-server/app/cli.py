@@ -29,6 +29,21 @@ from app.services import users as user_service
 cli = typer.Typer(help="Сервисные команды VPN-сервиса", no_args_is_help=True)
 
 
+# Как подписывается профиль в клиенте (Happ, Hiddify, v2RayTun).
+# Здесь намеренно НЕТ имени пользователя: Marzban подставляет вместо
+# {USERNAME} логин аккаунта (u<telegram_id>), и он светился в списке
+# подписок на экране клиента. Вместо этого — флаг и страна.
+LOCATION_LABELS: dict[str, str] = {
+    "nl": "🇳🇱 Нидерланды",
+    "ru": "🇷🇺 Россия",
+}
+
+
+def location_label(location: str) -> str:
+    """Подпись профиля по коду локации; для незнакомых — код заглавными."""
+    return LOCATION_LABELS.get(location.lower(), f"🌍 {location.upper()}")
+
+
 def _load_node_defaults(location: str) -> tuple[list[str], list[int]]:
     """Пулы SNI и портов из config/nodes.example.yml."""
     path = CONFIG_DIR / "nodes.example.yml"
@@ -115,7 +130,7 @@ def setup_marzban(
                 hosts = await mz.get_hosts()
                 hosts[tag] = [
                     {
-                        "remark": f"{location.upper()} · {{USERNAME}}",
+                        "remark": location_label(location),
                         "address": host,
                         "port": port,
                         "sni": sni,
@@ -514,6 +529,56 @@ def add_node(
                 )
             )
         typer.echo(f"✅ Нода {code} ({location}) {host}:{port} добавлена")
+
+    asyncio.run(_run())
+
+
+@cli.command("refresh-hosts")
+def refresh_hosts() -> None:
+    """
+    Переписать подписи профилей в панели по всем нодам из базы.
+
+    Нужна после смены шаблона remark: setup-marzban трогает только одну
+    ноду, а этой командой разом обновляются все — в клиенте вместо
+    логина аккаунта появляются флаг и страна.
+    """
+
+    async def _run() -> None:
+        from app.marzban import MarzbanClient, MarzbanError
+
+        async with session_scope() as session:
+            nodes = list(
+                (await session.execute(select(Node).order_by(Node.code))).scalars()
+            )
+
+        if not nodes:
+            typer.echo("В базе нет ни одной ноды — сначала setup-marzban")
+            raise typer.Exit(code=1)
+
+        try:
+            async with MarzbanClient() as mz:
+                hosts = await mz.get_hosts()
+                changed = 0
+                for node in nodes:
+                    tag = f"VLESS_REALITY_{node.code}"
+                    entries = hosts.get(tag)
+                    if not entries:
+                        typer.echo(f"⚠️  В панели нет host для {tag} — пропускаю")
+                        continue
+                    label = location_label(node.location)
+                    for entry in entries:
+                        if entry.get("remark") != label:
+                            entry["remark"] = label
+                            changed += 1
+                    typer.echo(f"{tag} → {label}")
+                if changed:
+                    await mz.update_hosts(hosts)
+                    typer.echo(f"✅ Обновлено подписей: {changed}")
+                else:
+                    typer.echo("Подписи уже актуальны")
+        except MarzbanError as err:
+            typer.echo(f"Панель недоступна: {err}")
+            raise typer.Exit(code=1) from err
 
     asyncio.run(_run())
 

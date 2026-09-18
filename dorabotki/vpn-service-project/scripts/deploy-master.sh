@@ -97,7 +97,10 @@ render_config() {
     done
 
     log "Собираю конфиг Xray для нод: $NODES"
-    dc run --rm --no-deps -T \
+    # --user root: внутри образа мы работаем от appuser, а каталог
+    # config/generated на хосте принадлежит root — без этого флага
+    # генератор падает с PermissionError на reality-keys.json.
+    dc run --rm --no-deps -T --user root \
         -v "$GEN_DIR:/generated" \
         api python -m app.cli render-xray-config \
         "${node_args[@]}" \
@@ -222,6 +225,12 @@ case "$ACTION" in
         echo "    echo 'NODES=\"$NODES\"' >> .env"
         ;;
 
+    relabel|refresh-hosts)
+        # Переписать подписи профилей в панели (флаг + страна вместо логина)
+        ensure_fresh_image
+        dc exec -T api python -m app.cli refresh-hosts
+        ;;
+
     logs)    dc logs -f --tail 100 ;;
     status|ps) dc ps ;;
     restart) dc restart ;;
@@ -234,5 +243,5 @@ case "$ACTION" in
         dc up -d --build
         ;;
     stop|down) dc down ;;
-    *) fail "Неизвестная команда: $ACTION. Доступны: up, logs, status, restart, keys, update, stop" ;;
+    *) fail "Неизвестная команда: $ACTION. Доступны: up, logs, status, restart, keys, update, stop, node-cert, add-node, relabel" ;;
 esac

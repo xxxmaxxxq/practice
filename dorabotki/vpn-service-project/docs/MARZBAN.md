@@ -173,6 +173,11 @@ ufw allow 2053
 его незачем. Перед запуском скрипт проверяет, что сертификат на месте и не
 повреждён — иначе нода поднимется, но останется в статусе error.
 
+Запускать ноду нужно именно через `start.sh`, а не голым `docker run`:
+скрипт сначала снимает старый контейнер (`docker rm -f marzban-node`).
+Без этого повторный запуск падает с
+`Conflict. The container name "/marzban-node" is already in use`.
+
 Скрипт `install-node.sh` ставит Docker, открывает порты (22, 443, 2053,
 62050, 62051), включает BBR и сетевой тюнинг.
 
@@ -194,7 +199,20 @@ bash scripts/deploy-master.sh add-node ru-1 ru 185.246.220.115 2053 www.samsung.
 echo 'NODES="nl-1:8443:www.nvidia.com ru-1:2053:www.samsung.com"' >> .env
 ```
 
-### 4. Проверить
+### 4. Подписи профилей в клиенте
+
+В списке подписок Happ каждая локация подписана флагом и страной —
+🇳🇱 Нидерланды и 🇷🇺 Россия. Логин аккаунта (`u<telegram_id>`) в подпись
+не попадает: иначе на чужом телефоне был бы виден Telegram ID владельца.
+
+Новые ноды получают такую подпись сразу, при `add-node`. Если нода была
+заведена раньше — перепишите подписи разом:
+
+```bash
+bash scripts/deploy-master.sh relabel
+```
+
+### 5. Проверить
 
 ```bash
 bash scripts/deploy-master.sh status
@@ -212,6 +230,7 @@ docker exec salt_api python -m app.cli doctor --telegram-id ВАШ_ID
 | Статус `error` в панели | Сертификат вставлен не полностью или с лишними пробелами |
 | Статус `connecting` дольше минуты | Закрыты порты 62050/62051 на ноде: `ufw allow 62050 && ufw allow 62051` |
 | Нода `connected`, но ключи не работают | Не открыт 2053: `ufw allow 2053` на российском сервере |
+| `PermissionError: /generated/reality-keys.json` | Старая версия скрипта: генератор конфига запускался от `appuser`, а `config/generated` принадлежит root. `git pull` — теперь `deploy-master.sh` запускает его с `--user root` |
 
 ## Кто подключён и у кого есть подписка
 
