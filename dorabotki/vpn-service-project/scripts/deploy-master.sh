@@ -109,6 +109,11 @@ render_config() {
     chmod 600 "$KEYS_FILE" 2>/dev/null || true
 }
 
+ensure_fresh_image() {
+    log "Проверяю, что контейнеры собраны из текущего кода…"
+    dc up -d --build api bot worker >/dev/null 2>&1 || dc up -d --build >/dev/null
+}
+
 wait_for_panel() {
     log "Жду, пока панель поднимется…"
     for _ in $(seq 1 30); do
@@ -175,6 +180,9 @@ case "$ACTION" in
         ;;
 
     node-cert)
+        # Пересобираем образ: после git pull код на диске новее, чем в
+        # работающем контейнере, и новых команд CLI там просто нет
+        ensure_fresh_image
         # Сертификат панели — его нужно положить на сервер новой ноды
         dc exec -T api python -m app.cli node-cert
         ;;
@@ -186,6 +194,8 @@ case "$ACTION" in
         NEW_HOST="${4:?Укажите IP сервера ноды}"
         NEW_PORT="${5:-2053}"
         NEW_SNI="${6:-www.samsung.com}"
+
+        ensure_fresh_image
 
         log "Добавляю inbound для $NEW_CODE в конфиг Xray…"
         NODES="$NODES $NEW_CODE:$NEW_PORT:$NEW_SNI"
