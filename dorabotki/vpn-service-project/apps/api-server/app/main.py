@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import PROJECT_ROOT, get_settings, tariff_by_code
 from app.db import close_connections, get_redis, get_session
+from app.marzban import MarzbanClient, MarzbanError
 from app.models import Payment, User
 from app.payments.registry import get_provider
 from app.schemas import (
@@ -116,8 +117,8 @@ async def subscription(token: str, request: Request, session: AsyncSession = Dep
     Отдать клиенту актуальные конфиги.
 
     Это сердце Dynamic Subscription: ссылка у пользователя постоянная,
-    а содержимое собирается на лету из панели. Поэтому смена ноды,
-    порта или SNI (в том числе автоматическая) доезжает до всех клиентов
+    а содержимое собирается на лету из панели. Поэтому смена ноды, порта
+    или SNI (в том числе автоматическая) доезжает до всех клиентов
     без перевыпуска ключей.
     """
     result = await session.execute(select(User).where(User.subscription_token == token))
@@ -125,22 +126,56 @@ async def subscription(token: str, request: Request, session: AsyncSession = Dep
     if user is None:
         raise HTTPException(status_code=404, detail="Not found")
 
-    marzban_url = f"{settings.marzban_base_url.rstrip('/')}/sub/{user.marzban_username}"
-    headers = {"User-Agent": request.headers.get("user-agent", "")}
+    # Имя профиля в приложении. Кириллица и эмодзи в заголовках HTTP
+    # запрещены, поэтому клиенты договорились о префиксе base64:
+    title = base64.b64encode(settings.service_name.encode()).decode()
+
+    subscription_obj = user.subscription
+    if subscription_obj is None or not subscription_obj.is_active:
+        # Подписка кончилась: приложению отдаём пустой список конфигов,
+        # чтобы оно показало понятный статус, а не ошибку сети
+        return PlainTextResponse(
+            content="",
+            status_code=200,
+            headers={
+                "profile-title": f"base64:{title}",
+                "profile-update-interval": "6",
+                # Кириллица в заголовках HTTP запрещена (latin-1),
+                # поэтому текст тоже уходит в base64 — клиенты это понимают
+                "announce": "base64:"
+                + base64.b64encode(
+                    "Подписка закончилась. Продлите её в боте — ключ останется прежним.".encode()
+                ).decode(),
+            },
+        )
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(marzban_url, headers=headers)
-    except httpx.HTTPError as err:
+        async with MarzbanClient() as mz:
+            path = await mz.get_subscription_path(user.marzban_username)
+
+            # Аккаунта в панели может не быть: например, подписку выдали,
+            # когда панель ещё не работала. Чиним на месте, а не отдаём ошибку
+            if path is None:
+                log.info("Аккаунт %s отсутствует в панели — создаю", user.marzban_username)
+                await sub_service.sync_to_marzban(session, user, subscription_obj)
+                path = await mz.get_subscription_path(user.marzban_username)
+
+            if path is None:
+                raise HTTPException(status_code=404, detail="Subscription not found")
+
+            marzban_url = f"{settings.marzban_base_url.rstrip('/')}{path}"
+            resp = await mz._client.get(
+                marzban_url, headers={"User-Agent": request.headers.get("user-agent", "")}
+            )
+    except MarzbanError as err:
         log.error("Панель недоступна при отдаче подписки: %s", err)
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable") from err
+    except httpx.HTTPError as err:
+        log.error("Ошибка получения подписки: %s", err)
         raise HTTPException(status_code=503, detail="Service temporarily unavailable") from err
 
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
-
-    # Имя профиля в приложении. Кириллица и эмодзи в заголовках HTTP
-    # запрещены, поэтому клиенты договорились о префиксе base64:
-    title = base64.b64encode(settings.service_name.encode()).decode()
 
     headers = {
         "Content-Type": resp.headers.get("content-type", "text/plain; charset=utf-8"),

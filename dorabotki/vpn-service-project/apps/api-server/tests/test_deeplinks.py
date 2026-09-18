@@ -57,3 +57,16 @@ def test_import_page_replaces_only_first_occurrence():
     from app.utils.deeplink import import_page
 
     assert import_page(url) == "https://vpn.example.com/i/tok_sub_1"
+
+
+def test_headers_are_latin1_safe():
+    """
+    Заголовки HTTP кодируются в latin-1: кириллица в них роняет ответ.
+    Поэтому и название сервиса, и текст объявления уходят в base64.
+    """
+    import base64
+
+    for text in ("SaltVPN", "Подписка закончилась. Продлите её в боте."):
+        encoded = "base64:" + base64.b64encode(text.encode()).decode()
+        encoded.encode("latin-1")  # не должно бросать
+        assert base64.b64decode(encoded.removeprefix("base64:")).decode() == text

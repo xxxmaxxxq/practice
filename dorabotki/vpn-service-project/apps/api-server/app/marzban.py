@@ -190,6 +190,18 @@ class MarzbanClient:
     async def reset_traffic(self, username: str) -> None:
         await self._request("POST", f"/api/user/{username}/reset")
 
+    async def get_subscription_path(self, username: str) -> str | None:
+        """
+        Внутренний путь подписки, например /sub/eyJ0eXAiOi...
+
+        Панель отдаёт конфиги не по имени аккаунта, а по собственному токену:
+        запрос к /sub/<имя> она честно не находит и отвечает 404.
+        """
+        user = await self.get_user(username)
+        if not user:
+            return None
+        return user.get("subscription_url") or None
+
     async def get_subscription_url(self, username: str) -> str:
         """Ссылка-подписка, которую импортирует приложение клиента."""
         user = await self.get_user(username)
