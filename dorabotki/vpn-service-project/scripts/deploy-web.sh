@@ -74,6 +74,15 @@ check_domain() {
 case "$ACTION" in
     up|start|"")
         check_domain
+        # Режим «только бот» мог оставить контейнер с тем же именем —
+        # compose на этом падает с конфликтом имён
+        if docker ps -a --format '{{.Names}}' | grep -qx "salt_bot"; then
+            if ! docker inspect salt_bot --format '{{index .Config.Labels "com.docker.compose.project"}}' \
+                | grep -q .; then
+                log "Убираю контейнер из режима «только бот» (база в томе сохраняется)…"
+                docker rm -f salt_bot >/dev/null
+            fi
+        fi
         log "Собираю и запускаю бота, API и Caddy…"
         dc up -d --build
         log "Жду выпуск сертификата (до минуты)…"
