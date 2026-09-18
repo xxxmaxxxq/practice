@@ -52,3 +52,23 @@ def test_user_defaults():
     user = User(telegram_id=1, referral_code="abc123", marzban_username="u1")
     assert user.telegram_id == 1
     assert user.marzban_username == "u1"
+
+
+async def test_new_user_subscription_access_does_not_raise():
+    """
+    У только что созданного пользователя связь с подпиской не загружена.
+    Обращение к ней без явной подгрузки роняло /start с MissingGreenlet —
+    именно так бот «молчал» при первом запуске с нового аккаунта.
+    """
+    from app.db import create_all_tables, session_scope
+    from app.services import users as user_service
+
+    await create_all_tables()
+
+    async with session_scope() as session:
+        user, is_new = await user_service.get_or_create(
+            session, telegram_id=777000111, first_name="Новичок"
+        )
+        assert is_new is True
+        assert user.subscription is None
+        assert user.trial_used is False

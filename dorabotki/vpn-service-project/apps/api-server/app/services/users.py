@@ -89,6 +89,13 @@ async def get_or_create(
     )
     session.add(user)
     await session.flush()
+
+    # Явно подгружаем связь: у только что созданного объекта она не загружена,
+    # и первое же обращение к user.subscription попыталось бы сходить в базу
+    # в неподходящий момент — asyncpg и aiosqlite отвечают на это
+    # MissingGreenlet, а бот молча падает на /start
+    await session.refresh(user, attribute_names=["subscription"])
+
     log.info("Новый пользователь: tg=%s", telegram_id)
     return user, True
 

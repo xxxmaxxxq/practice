@@ -46,10 +46,14 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             await ref_service.attach_referrer(session, user, command.args[4:])
 
         name = user_service.display_name(tg_user.first_name, tg_user.username)
-        subscription = user.subscription
 
-        # Новичок без подписки — главный экран с триалом
-        if is_new or (subscription is None and not user.trial_used):
+        # Новичку связь с подпиской не нужна — проверяем флаг до обращения к ней
+        if is_new:
+            await message.answer(text("start_new", name=name), reply_markup=kb.start_new_user())
+            return
+
+        subscription = user.subscription
+        if subscription is None and not user.trial_used:
             await message.answer(text("start_new", name=name), reply_markup=kb.start_new_user())
             return
 
