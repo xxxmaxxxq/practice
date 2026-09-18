@@ -45,7 +45,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         if is_new and command.args and command.args.startswith("ref_"):
             await ref_service.attach_referrer(session, user, command.args[4:])
 
-        name = tg_user.first_name or "друг"
+        name = user_service.display_name(tg_user.first_name, tg_user.username)
         subscription = user.subscription
 
         # Новичок без подписки — главный экран с триалом

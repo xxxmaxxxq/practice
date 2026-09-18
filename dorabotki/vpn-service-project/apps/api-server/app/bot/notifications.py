@@ -19,6 +19,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
 from app.bot import keyboards as kb
 from app.config import get_settings, text
+from app.services import users as user_service
 
 log = logging.getLogger(__name__)
 settings = get_settings()
@@ -98,7 +99,11 @@ async def send_payment_success(bot: Bot, result: dict) -> None:
         await safe_send(
             bot,
             referrer.telegram_id,
-            text("referral_qualified", name=user.first_name or "друг", reward_text=reward),
+            text(
+                "referral_qualified",
+                name=user_service.display_name(user.first_name, user.username),
+                reward_text=reward,
+            ),
         )
 
 

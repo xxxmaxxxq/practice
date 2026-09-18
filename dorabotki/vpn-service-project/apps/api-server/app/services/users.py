@@ -26,6 +26,22 @@ settings = get_settings()
 TRIAL_IP_TTL = 30 * 24 * 3600
 
 
+def display_name(first_name: str | None, username: str | None = None) -> str:
+    """
+    Как обратиться к человеку.
+
+    У части аккаунтов имя скрыто настройками приватности, у ботов и вовсе
+    пустое. Поэтому цепочка: имя → @username → нейтральное «друг».
+    Без неё в приветствии появлялось бы «Привет, None!».
+    """
+    name = (first_name or "").strip()
+    if name:
+        return name
+    if username:
+        return f"@{username}"
+    return "друг"
+
+
 async def get_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
     return result.scalar_one_or_none()
