@@ -232,6 +232,16 @@ class MarzbanClient:
                 result[protocol] = tags
         return result
 
+    async def list_users(self, limit: int = 200) -> list[dict[str, Any]]:
+        """
+        Аккаунты панели: статус, трафик, время последней активности.
+
+        IP-адресов здесь нет и быть не может: access-логи Xray выключены,
+        панель хранит только факт активности (online_at) и объём трафика.
+        """
+        data = await self._request("GET", f"/api/users?limit={limit}") or {}
+        return data.get("users", [])
+
     # ── Ноды ───────────────────────────────────────────────────────────────
 
     async def list_nodes(self) -> list[dict[str, Any]]:
