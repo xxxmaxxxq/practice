@@ -184,8 +184,8 @@ IMPORT_PAGE = """<!DOCTYPE html>
   <a class="a" href="{first}">Перейти в Happ</a>
 
   <details>
-    <summary>Другое приложение или не открылось</summary>
-    <a class="a g" href="happ://import/{sub}">Happ</a>
+    <summary>Не открылось или другое приложение</summary>
+    <a class="a g" href="{happ_b64}">Happ (запасной формат)</a>
     <a class="a g" href="hiddify://import/{sub_enc}">Hiddify</a>
     <a class="a g" href="v2raytun://import/{sub}">v2RayTun</a>
     <a class="a g" href="streisand://import/{sub_enc}">Streisand (iOS)</a>
@@ -229,6 +229,7 @@ async def import_page(token: str, app: str = "happ", session: AsyncSession = Dep
             sub=sub_url,
             sub_enc=quote(sub_url, safe=""),
             first=links.get(app, links["happ"]),
+            happ_b64=links["happ_base64"],
             ios=deeplink.APP_STORES["happ_ios"],
             android=deeplink.APP_STORES["happ_android"],
         )
@@ -400,6 +401,7 @@ async def miniapp_me(
         },
         "subscription": subscription_info,
         "subscription_url": sub_url,
+        "import_url": deeplink.import_page(sub_url),
         "deeplinks": deeplink.all_links(sub_url),
         "referrals": stats,
         "personal_offer": (

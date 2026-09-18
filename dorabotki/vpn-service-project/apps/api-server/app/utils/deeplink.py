@@ -8,6 +8,7 @@ Deep links для импорта подписки в клиентские при
 
 from __future__ import annotations
 
+import base64
 from urllib.parse import quote
 
 # Ссылки на установку приложений (показываем, если deep link не сработал)
@@ -21,8 +22,25 @@ APP_STORES = {
 
 
 def happ(subscription_url: str) -> str:
-    """Happ — основное рекомендуемое приложение (iOS/Android/Windows/macOS)."""
-    return f"happ://import/{subscription_url}"
+    """
+    Happ — основное рекомендуемое приложение (iOS/Android/Windows/macOS).
+
+    Важно: у Happ действие называется add, а не import. На happ://import/...
+    приложение отвечает «Неизвестное действие deepLink» — схема import занята
+    у него под другое. Формат: happ://add/<url или base64>.
+    """
+    return f"happ://add/{subscription_url}"
+
+
+def happ_base64(subscription_url: str) -> str:
+    """
+    Тот же импорт, но ссылка в base64.
+
+    Запасной вариант: часть сборок Happ разбирает голый URL в пути хуже,
+    чем base64, особенно когда в ссылке есть параметры запроса.
+    """
+    encoded = base64.b64encode(subscription_url.encode()).decode()
+    return f"happ://add/{encoded}"
 
 
 def hiddify(subscription_url: str) -> str:
@@ -42,6 +60,7 @@ def all_links(subscription_url: str) -> dict[str, str]:
     """Все поддерживаемые deep links разом — удобно отдавать в Mini App."""
     return {
         "happ": happ(subscription_url),
+        "happ_base64": happ_base64(subscription_url),
         "hiddify": hiddify(subscription_url),
         "v2raytun": v2raytun(subscription_url),
         "streisand": streisand(subscription_url),
