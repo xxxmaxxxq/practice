@@ -160,6 +160,34 @@ def setup_marzban(
     asyncio.run(_run())
 
 
+@cli.command("expire-user")
+def expire_user(
+    telegram_id: int = typer.Option(..., help="Telegram ID пользователя"),
+) -> None:
+    """
+    Завершить подписку прямо сейчас.
+
+    Нужна для двух вещей: проверить, как выглядит экран «подписка
+    закончилась», не дожидаясь реального срока, и вручную отключить
+    доступ, если это понадобится.
+    """
+
+    async def _run() -> None:
+        async with session_scope() as session:
+            user = await user_service.get_by_telegram_id(session, telegram_id)
+            if user is None or user.subscription is None:
+                typer.echo("Пользователь или подписка не найдены")
+                raise typer.Exit(code=1)
+
+            user.subscription.expires_at = utcnow() - timedelta(hours=1)
+            user.subscription.status = SubscriptionStatus.EXPIRED
+            user.subscription.paused_until = None
+            await sub_service.expire(session, user, user.subscription)
+            typer.echo(f"✅ Подписка tg={telegram_id} завершена. Напишите боту /start")
+
+    asyncio.run(_run())
+
+
 @cli.command("add-node")
 def add_node(
     code: str = typer.Option(..., help="Уникальный код ноды, например nl-1"),
