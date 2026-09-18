@@ -64,6 +64,39 @@ services:
       - /var/lib/marzban-node:/var/lib/marzban-node
 COMPOSE
 
+# Запуск без compose: в сборке Docker из репозитория Ubuntu плагина нет,
+# а ради одного контейнера ставить его необязательно
+cat > "$NODE_DIR/start.sh" <<'START'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CERT=/var/lib/marzban-node/ssl_client_cert.pem
+
+if [[ ! -s "$CERT" ]]; then
+    echo "[✗] Нет сертификата панели: $CERT"
+    echo "    Возьмите его на мастере: bash scripts/deploy-master.sh node-cert"
+    exit 1
+fi
+if ! head -1 "$CERT" | grep -q "BEGIN CERTIFICATE"; then
+    echo "[✗] Файл сертификата повреждён: первая строка не BEGIN CERTIFICATE"
+    exit 1
+fi
+
+docker rm -f marzban-node >/dev/null 2>&1 || true
+docker run -d \
+    --name marzban-node \
+    --restart always \
+    --network host \
+    -e SSL_CLIENT_CERT_FILE=/var/lib/marzban-node/ssl_client_cert.pem \
+    -e SERVICE_PROTOCOL=rest \
+    -v /var/lib/marzban-node:/var/lib/marzban-node \
+    gozargah/marzban-node:latest >/dev/null
+
+sleep 3
+docker ps --filter name=marzban-node --format '[+] {{.Names}}: {{.Status}}'
+START
+chmod +x "$NODE_DIR/start.sh"
+
 touch "$DATA_DIR/ssl_client_cert.pem"
 chmod 600 "$DATA_DIR/ssl_client_cert.pem"
 
@@ -72,7 +105,7 @@ echo
 echo "Дальше:"
 echo "  1. В панели Marzban: Nodes → Add Node → скопируйте сертификат"
 echo "  2. Вставьте его сюда:  nano $DATA_DIR/ssl_client_cert.pem"
-echo "  3. Запустите ноду:     docker compose -f $NODE_DIR/docker-compose.yml up -d"
+echo "  3. Запустите ноду:     bash $NODE_DIR/start.sh"
 echo "  4. На мастере добавьте ноду в сервис:"
 echo "     python -m app.cli add-node --code nl-1 --location nl --host <IP этой ноды>"
 echo

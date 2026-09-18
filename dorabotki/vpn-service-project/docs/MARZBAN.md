@@ -149,10 +149,29 @@ bash scripts/deploy-master.sh node-cert
 ```bash
 ssh root@185.246.220.115
 curl -fsSL https://raw.githubusercontent.com/xxxmaxxxq/practice/dev/vpn-service-project/scripts/install-node.sh | bash
-nano /var/lib/marzban-node/ssl_client_cert.pem    # вставить сертификат
-docker compose -f /opt/marzban-node/docker-compose.yml up -d
+```
+
+Записать сертификат (вставьте его вместо строки-заглушки):
+
+```bash
+cat > /var/lib/marzban-node/ssl_client_cert.pem <<'CERT'
+-----BEGIN CERTIFICATE-----
+...сертификат из node-cert...
+-----END CERTIFICATE-----
+CERT
+```
+
+Запустить:
+
+```bash
+bash /opt/marzban-node/start.sh
 ufw allow 2053
 ```
+
+`start.sh` поднимает ноду обычной командой `docker run`: плагина `compose`
+в сборке Docker из репозитория Ubuntu нет, а ради одного контейнера ставить
+его незачем. Перед запуском скрипт проверяет, что сертификат на месте и не
+повреждён — иначе нода поднимется, но останется в статусе error.
 
 Скрипт `install-node.sh` ставит Docker, открывает порты (22, 443, 2053,
 62050, 62051), включает BBR и сетевой тюнинг.
