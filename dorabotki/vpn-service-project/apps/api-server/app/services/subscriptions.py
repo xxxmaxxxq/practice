@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings, get_tariffs, limits, tariff_by_code
-from app.marzban import MarzbanClient, MarzbanError, build_inbounds
+from app.marzban import MarzbanClient, MarzbanError, build_inbounds, filter_available
 from app.models import (
     Node,
     NodeStatus,
@@ -84,6 +84,17 @@ async def sync_to_marzban(
 
     try:
         async with MarzbanClient() as mz:
+            # Сверяемся с панелью: просим только те inbounds, которые в ней есть
+            available = await mz.list_inbounds()
+            inbounds = filter_available(inbounds, available)
+            if not inbounds:
+                log.error(
+                    "В панели нет ни одного нужного inbound (ожидали %s). "
+                    "Проверьте конфигурацию Xray.",
+                    [n.code for n in nodes],
+                )
+                return None
+
             existing = await mz.get_user(user.marzban_username)
             note = f"tg={user.telegram_id} tariff={subscription.tariff_code} devices={device_limit}"
 

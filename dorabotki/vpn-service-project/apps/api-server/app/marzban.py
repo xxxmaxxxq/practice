@@ -204,6 +204,21 @@ class MarzbanClient:
         user = await self.get_user(username)
         return int(user.get("used_traffic", 0)) if user else 0
 
+    async def list_inbounds(self) -> dict[str, list[str]]:
+        """
+        Какие inbounds настроены в панели: {протокол: [теги]}.
+
+        Нужно, чтобы не отправлять в Marzban теги несуществующих inbounds:
+        панель отвечает на такое ошибкой, и пользователь остаётся без ключа.
+        """
+        data = await self._request("GET", "/api/inbounds") or {}
+        result: dict[str, list[str]] = {}
+        for protocol, inbounds in data.items():
+            tags = [i.get("tag") for i in inbounds if i.get("tag")]
+            if tags:
+                result[protocol] = tags
+        return result
+
     # ── Ноды ───────────────────────────────────────────────────────────────
 
     async def list_nodes(self) -> list[dict[str, Any]]:
@@ -241,6 +256,24 @@ class MarzbanClient:
 
     async def get_system_stats(self) -> dict[str, Any]:
         return await self._request("GET", "/api/system") or {}
+
+
+def filter_available(
+    wanted: dict[str, list[str]], available: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    """
+    Оставить только те теги, которые действительно есть в панели.
+
+    Мы просим VLESS, Hysteria2 и Shadowsocks, но на ноде может быть поднят
+    только VLESS. Без этой фильтрации создание пользователя падает целиком —
+    лучше выдать ключ с тем, что есть.
+    """
+    result: dict[str, list[str]] = {}
+    for protocol, tags in wanted.items():
+        existing = [tag for tag in tags if tag in available.get(protocol, [])]
+        if existing:
+            result[protocol] = existing
+    return result
 
 
 def build_inbounds(location_codes: list[str], node_codes: list[str]) -> dict[str, list[str]]:

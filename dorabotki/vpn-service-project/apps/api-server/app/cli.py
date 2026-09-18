@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import timedelta
 
 import typer
@@ -36,6 +37,127 @@ def _load_node_defaults(location: str) -> tuple[list[str], list[int]]:
     sni = (data.get("sni_pool") or {}).get(location, [])
     ports = data.get("backup_ports", [443, 8443, 2053, 2083])
     return sni, ports
+
+
+@cli.command("reality-keys")
+def reality_keys(
+    short_id_bytes: int = typer.Option(4, help="Длина shortId в байтах (4 = 8 символов)"),
+) -> None:
+    """
+    Сгенерировать ключи Reality (X25519) и shortId.
+
+    Reality шифрует рукопожатие парой ключей: приватный лежит на сервере,
+    публичный попадает в конфиг клиента. Xray умеет это сам (xray x25519),
+    но своя реализация избавляет от необходимости держать бинарник рядом.
+    """
+    import base64
+    import secrets
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+    private = X25519PrivateKey.generate()
+    raw_private = private.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    raw_public = private.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+    def b64(data: bytes) -> str:
+        # Xray ждёт base64url без padding
+        return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+    typer.echo(
+        json.dumps(
+            {
+                "private_key": b64(raw_private),
+                "public_key": b64(raw_public),
+                "short_id": secrets.token_hex(short_id_bytes),
+            }
+        )
+    )
+
+
+@cli.command("setup-marzban")
+def setup_marzban(
+    node_code: str = typer.Option("nl-1", help="Код ноды"),
+    location: str = typer.Option("nl", help="Локация: nl или ru"),
+    host: str = typer.Option(..., help="IP или домен, по которому клиенты идут на ноду"),
+    port: int = typer.Option(8443, help="Порт inbound"),
+    sni: str = typer.Option("www.nvidia.com", help="Маскировочный домен Reality"),
+) -> None:
+    """
+    Прописать ноду в панели и в базе сервиса.
+
+    Делает две вещи, которые иначе пришлось бы делать руками в интерфейсе:
+    создаёт host для inbound (адрес, порт, SNI — то, что видит клиент)
+    и заводит запись ноды в нашей базе, чтобы работали тарифы и Auto-Healing.
+    """
+
+    async def _run() -> None:
+        from app.marzban import MarzbanClient, MarzbanError
+
+        tag = f"VLESS_REALITY_{node_code}"
+
+        try:
+            async with MarzbanClient() as mz:
+                available = await mz.list_inbounds()
+                all_tags = [t for tags in available.values() for t in tags]
+                if tag not in all_tags:
+                    typer.echo(f"В панели нет inbound с тегом {tag}. Найдено: {all_tags}")
+                    raise typer.Exit(code=1)
+
+                hosts = await mz.get_hosts()
+                hosts[tag] = [
+                    {
+                        "remark": f"{location.upper()} · {{USERNAME}}",
+                        "address": host,
+                        "port": port,
+                        "sni": sni,
+                        "host": sni,
+                        "path": "",
+                        "security": "inbound_default",
+                        "alpn": "",
+                        "fingerprint": "chrome",
+                        "allowinsecure": False,
+                        "is_disabled": False,
+                    }
+                ]
+                await mz.update_hosts(hosts)
+                typer.echo(f"✅ Host для {tag} настроен: {host}:{port}, SNI {sni}")
+        except MarzbanError as err:
+            typer.echo(f"Панель недоступна: {err}")
+            raise typer.Exit(code=1) from err
+
+        sni_pool, backup_ports = _load_node_defaults(location)
+        async with session_scope() as session:
+            node = (
+                await session.execute(select(Node).where(Node.code == node_code))
+            ).scalar_one_or_none()
+            if node is None:
+                session.add(
+                    Node(
+                        code=node_code,
+                        location=location,
+                        host=host,
+                        port=port,
+                        current_sni=sni,
+                        sni_pool=sni_pool or [sni],
+                        backup_ports=backup_ports,
+                    )
+                )
+                typer.echo(f"✅ Нода {node_code} добавлена в базу сервиса")
+            else:
+                node.host, node.port, node.current_sni = host, port, sni
+                node.status = NodeStatus.HEALTHY
+                node.fail_count = 0
+                typer.echo(f"✅ Нода {node_code} обновлена: {host}:{port}")
+
+    asyncio.run(_run())
 
 
 @cli.command("add-node")

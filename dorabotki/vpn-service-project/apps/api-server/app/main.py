@@ -6,6 +6,7 @@ FastAPI-приложение: вебхуки платежей, ссылка-по
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -137,17 +138,27 @@ async def subscription(token: str, request: Request, session: AsyncSession = Dep
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
 
-    return PlainTextResponse(
-        content=resp.text,
-        status_code=resp.status_code,
-        headers={
-            "Content-Type": resp.headers.get("content-type", "text/plain; charset=utf-8"),
-            # Подсказка приложению, как часто обновлять подписку
-            "Subscription-Userinfo": resp.headers.get("subscription-userinfo", ""),
-            "Profile-Update-Interval": "6",
-            "Profile-Title": "VPN Service",
-        },
-    )
+    # Имя профиля в приложении. Кириллица и эмодзи в заголовках HTTP
+    # запрещены, поэтому клиенты договорились о префиксе base64:
+    title = base64.b64encode(settings.service_name.encode()).decode()
+
+    headers = {
+        "Content-Type": resp.headers.get("content-type", "text/plain; charset=utf-8"),
+        "profile-title": f"base64:{title}",
+        # Как часто приложение перечитывает подписку. Ради этого
+        # и работает Auto-Healing: смена ноды доезжает сама
+        "profile-update-interval": "6",
+        "profile-web-page-url": settings.public_base_url,
+    }
+
+    # Остаток трафика и дата окончания — приложение покажет их в карточке
+    userinfo = resp.headers.get("subscription-userinfo")
+    if userinfo:
+        headers["subscription-userinfo"] = userinfo
+    if settings.support_username:
+        headers["support-url"] = f"https://t.me/{settings.support_username}"
+
+    return PlainTextResponse(content=resp.text, status_code=resp.status_code, headers=headers)
 
 
 # ── Страница импорта подписки в приложение ─────────────────────────────────

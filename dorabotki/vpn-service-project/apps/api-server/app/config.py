@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
 
     # ── Telegram ───────────────────────────────────────────────────────────
+    # Название сервиса: попадает в заголовок подписки и отображается
+    # в клиентских приложениях вместо адреса сервера
+    service_name: str = "SaltVPN"
+
     bot_token: str = ""
     bot_username: str = "your_vpn_bot"
     admin_ids: str = ""
