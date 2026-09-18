@@ -27,14 +27,65 @@ fail() { echo -e "\033[1;31m[✗]\033[0m $*"; exit 1; }
 command -v docker >/dev/null 2>&1 \
     || fail "Docker не установлен: curl -fsSL https://get.docker.com | sh"
 
-# Здесь compose обязателен: контейнеров три и между ними есть зависимости
+# Три контейнера удобнее поднимать через compose, но он есть не везде:
+# в сборке Docker из репозитория Ubuntu плагина нет. Поэтому предусмотрен
+# путь на голых docker-командах — результат тот же.
+COMPOSE_MODE="none"
 if docker compose version >/dev/null 2>&1; then
+    COMPOSE_MODE="plugin"
     dc() { docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
-elif command -v docker-compose >/dev/null 2>&1; then
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+    COMPOSE_MODE="standalone"
     dc() { docker-compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
-else
-    fail "Нужен docker compose. Поставьте: apt-get install -y docker-compose-plugin"
 fi
+
+IMAGE_NAME="salt-bot"
+NETWORK_NAME="salt_net"
+
+plain_up() {
+    warn "compose не найден — поднимаю контейнеры обычными docker-командами"
+
+    log "Собираю образ $IMAGE_NAME…"
+    docker build -t "$IMAGE_NAME" -f "$PROJECT_DIR/docker/Dockerfile.api" "$PROJECT_DIR"
+
+    docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 \
+        || docker network create "$NETWORK_NAME" >/dev/null
+    for vol in salt_bot_data caddy_data caddy_config; do
+        docker volume inspect "$vol" >/dev/null 2>&1 || docker volume create "$vol" >/dev/null
+    done
+    docker rm -f salt_bot salt_api salt_caddy >/dev/null 2>&1 || true
+
+    log "Запускаю бота…"
+    docker run -d --name salt_bot --restart unless-stopped \
+        --network "$NETWORK_NAME" \
+        --env-file "$ENV_FILE" \
+        -e LOCAL_MODE=true -e BOT_MODE=polling -e SQLITE_PATH=/data/vpn_local.sqlite3 \
+        -v salt_bot_data:/data \
+        "$IMAGE_NAME" python -m app.bot.main >/dev/null
+
+    log "Запускаю API…"
+    # Сетевой алиас api обязателен: именно это имя ждёт Caddyfile.web
+    docker run -d --name salt_api --restart unless-stopped \
+        --network "$NETWORK_NAME" --network-alias api \
+        --env-file "$ENV_FILE" \
+        -e LOCAL_MODE=true -e SQLITE_PATH=/data/vpn_local.sqlite3 \
+        -v salt_bot_data:/data \
+        "$IMAGE_NAME" \
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers >/dev/null
+
+    log "Запускаю Caddy (выпуск сертификата)…"
+    docker run -d --name salt_caddy --restart unless-stopped \
+        --network "$NETWORK_NAME" \
+        -p 80:80 -p 443:443 \
+        -e DOMAIN="$DOMAIN_URL" \
+        -v "$PROJECT_DIR/docker/Caddyfile.web:/etc/caddy/Caddyfile:ro" \
+        -v caddy_data:/data -v caddy_config:/config \
+        caddy:2-alpine >/dev/null
+}
+
+plain_logs()    { docker logs -f --tail 100 salt_bot; }
+plain_status()  { docker ps --filter "name=salt_" ; }
+plain_stop()    { docker rm -f salt_bot salt_api salt_caddy >/dev/null 2>&1 || true; }
 
 [[ -f "$ENV_FILE" ]] || fail "Нет файла .env"
 
@@ -83,11 +134,15 @@ case "$ACTION" in
                 docker rm -f salt_bot >/dev/null
             fi
         fi
-        log "Собираю и запускаю бота, API и Caddy…"
-        dc up -d --build
+        if [[ "$COMPOSE_MODE" == "none" ]]; then
+            plain_up
+        else
+            log "Собираю и запускаю бота, API и Caddy…"
+            dc up -d --build
+        fi
         log "Жду выпуск сертификата (до минуты)…"
         sleep 25
-        dc ps
+        if [[ "$COMPOSE_MODE" == "none" ]]; then plain_status; else dc ps; fi
         echo
         if curl -fsS --max-time 15 "https://$DOMAIN/health" >/dev/null 2>&1; then
             log "Сайт отвечает по https — кнопка «Подключить в 1 клик» заработает"
@@ -97,7 +152,7 @@ case "$ACTION" in
         fi
         ;;
     logs)
-        dc logs -f --tail 100
+        if [[ "$COMPOSE_MODE" == "none" ]]; then plain_logs; else dc logs -f --tail 100; fi
         ;;
     check)
         check_domain
@@ -106,17 +161,21 @@ case "$ACTION" in
         curl -fsS --max-time 15 "https://$DOMAIN/health" && echo || warn "https не отвечает"
         ;;
     restart)
-        dc restart
+        if [[ "$COMPOSE_MODE" == "none" ]]; then
+            docker restart salt_bot salt_api salt_caddy
+        else
+            dc restart
+        fi
         ;;
     update)
         git pull
-        dc up -d --build
+        if [[ "$COMPOSE_MODE" == "none" ]]; then plain_up; else dc up -d --build; fi
         ;;
     status|ps)
-        dc ps
+        if [[ "$COMPOSE_MODE" == "none" ]]; then plain_status; else dc ps; fi
         ;;
     stop|down)
-        dc down
+        if [[ "$COMPOSE_MODE" == "none" ]]; then plain_stop; else dc down; fi
         ;;
     *)
         fail "Неизвестная команда: $ACTION. Доступны: up, logs, check, restart, update, status, stop"
