@@ -257,6 +257,34 @@ class MarzbanClient:
             return False
         return node.get("status") == "connected"
 
+    async def get_node_settings(self) -> dict[str, Any]:
+        """Сертификат и требования к версии ноды — нужны при подключении новой."""
+        return await self._request("GET", "/api/node/settings") or {}
+
+    async def add_node(
+        self,
+        name: str,
+        address: str,
+        port: int = 62050,
+        api_port: int = 62051,
+        usage_coefficient: float = 1.0,
+    ) -> dict[str, Any]:
+        """
+        Зарегистрировать ноду в панели.
+
+        Нода должна быть уже запущена с сертификатом этой панели, иначе
+        она подключится, но останется в статусе error.
+        """
+        payload = {
+            "name": name,
+            "address": address,
+            "port": port,
+            "api_port": api_port,
+            "usage_coefficient": usage_coefficient,
+            "add_as_new_host": False,
+        }
+        return await self._request("POST", "/api/node", json=payload)
+
     async def reconnect_node(self, node_id: int) -> None:
         await self._request("POST", f"/api/node/{node_id}/reconnect")
 

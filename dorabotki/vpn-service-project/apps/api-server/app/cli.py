@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import timedelta
+from pathlib import Path
 
 import typer
 import yaml
@@ -184,6 +185,201 @@ def expire_user(
             user.subscription.paused_until = None
             await sub_service.expire(session, user, user.subscription)
             typer.echo(f"✅ Подписка tg={telegram_id} завершена. Напишите боту /start")
+
+    asyncio.run(_run())
+
+
+@cli.command("render-xray-config")
+def render_xray_config(
+    node: list[str] = typer.Option(
+        ..., "--node", help="Нода в виде код:порт:sni, например nl-1:8443:www.nvidia.com"
+    ),
+    keys_file: str = typer.Option("/config/generated/reality-keys.json", help="Файл с ключами"),
+    output: str = typer.Option("/config/generated/xray_config.json", help="Куда записать конфиг"),
+) -> None:
+    """
+    Собрать конфиг Xray для панели — по одному inbound на каждую ноду.
+
+    Важно: панель раздаёт один конфиг на все ноды, и каждый inbound
+    поднимается на каждой из них. Поэтому порты должны быть свободны
+    на всех серверах сразу, а к какой ноде пойдёт клиент — решает host
+    в панели, а не сам inbound.
+
+    Ключи Reality хранятся отдельно по каждой ноде и переиспользуются:
+    перевыпуск разорвал бы работающие подписки.
+    """
+    import base64
+    import secrets
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+    keys_path = Path(keys_file)
+    keys: dict = {}
+    if keys_path.exists():
+        raw = json.loads(keys_path.read_text())
+        # Старый формат — один набор ключей без разбивки по нодам
+        keys = raw if "private_key" not in raw else {"nl-1": raw}
+
+    def make_keys() -> dict:
+        private = X25519PrivateKey.generate()
+        raw_private = private.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        raw_public = private.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
+        )
+
+        def b64(data: bytes) -> str:
+            return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+        return {
+            "private_key": b64(raw_private),
+            "public_key": b64(raw_public),
+            "short_id": secrets.token_hex(4),
+        }
+
+    inbounds = []
+    for item in node:
+        parts = item.split(":")
+        if len(parts) != 3:
+            typer.echo(f"Неверный формат ноды: {item}. Нужно код:порт:sni")
+            raise typer.Exit(code=1)
+        code, port, sni = parts[0], int(parts[1]), parts[2]
+
+        if code not in keys:
+            keys[code] = make_keys()
+            typer.echo(f"Сгенерированы ключи Reality для {code}")
+
+        inbounds.append(
+            {
+                "tag": f"VLESS_REALITY_{code}",
+                "listen": "0.0.0.0",
+                "port": port,
+                "protocol": "vless",
+                "settings": {"clients": [], "decryption": "none"},
+                "streamSettings": {
+                    "network": "tcp",
+                    "security": "reality",
+                    "realitySettings": {
+                        "show": False,
+                        "dest": f"{sni}:443",
+                        "xver": 0,
+                        "serverNames": [sni],
+                        "privateKey": keys[code]["private_key"],
+                        "shortIds": [keys[code]["short_id"]],
+                    },
+                },
+                "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]},
+            }
+        )
+
+    config = {
+        "log": {"loglevel": "warning", "access": "none", "error": ""},
+        "inbounds": inbounds,
+        "outbounds": [
+            {"tag": "DIRECT", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}},
+            {"tag": "BLOCK", "protocol": "blackhole", "settings": {}},
+        ],
+        "routing": {
+            "domainStrategy": "IPIfNonMatch",
+            "rules": [
+                {"type": "field", "ip": ["geoip:private"], "outboundTag": "BLOCK"},
+                {"type": "field", "protocol": ["bittorrent"], "outboundTag": "BLOCK"},
+                {
+                    "type": "field",
+                    "domain": ["geosite:category-ads-all"],
+                    "outboundTag": "BLOCK",
+                },
+            ],
+        },
+        "policy": {
+            "levels": {
+                "0": {
+                    "handshake": 4,
+                    "connIdle": 300,
+                    "uplinkOnly": 2,
+                    "downlinkOnly": 5,
+                    "statsUserUplink": True,
+                    "statsUserDownlink": True,
+                }
+            },
+            "system": {"statsInboundUplink": True, "statsInboundDownlink": True},
+        },
+        "stats": {},
+    }
+
+    keys_path.parent.mkdir(parents=True, exist_ok=True)
+    keys_path.write_text(json.dumps(keys, indent=2))
+    keys_path.chmod(0o600)
+    Path(output).write_text(json.dumps(config, indent=2))
+
+    tags = ", ".join(i["tag"] for i in inbounds)
+    typer.echo(f"✅ Конфиг собран: {tags}")
+
+
+@cli.command("node-cert")
+def node_cert() -> None:
+    """
+    Показать сертификат панели для подключения ноды.
+
+    Его нужно положить на сервер ноды — по нему нода докажет панели,
+    что она своя.
+    """
+
+    async def _run() -> None:
+        from app.marzban import MarzbanClient, MarzbanError
+
+        try:
+            async with MarzbanClient() as mz:
+                settings_data = await mz.get_node_settings()
+        except MarzbanError as err:
+            typer.echo(f"Панель недоступна: {err}")
+            raise typer.Exit(code=1) from err
+
+        cert = settings_data.get("certificate", "")
+        if not cert:
+            typer.echo("Панель не вернула сертификат")
+            raise typer.Exit(code=1)
+        typer.echo(cert)
+
+    asyncio.run(_run())
+
+
+@cli.command("add-marzban-node")
+def add_marzban_node(
+    name: str = typer.Option(..., help="Имя ноды в панели, например ru-1"),
+    address: str = typer.Option(..., help="IP сервера ноды"),
+    port: int = typer.Option(62050, help="Порт связи с панелью"),
+    api_port: int = typer.Option(62051, help="Порт API ноды"),
+) -> None:
+    """
+    Зарегистрировать ноду в панели.
+
+    Запускать после того, как нода поднята с сертификатом панели,
+    иначе она появится в списке со статусом error.
+    """
+
+    async def _run() -> None:
+        from app.marzban import MarzbanClient, MarzbanError
+
+        try:
+            async with MarzbanClient() as mz:
+                result = await mz.add_node(name=name, address=address, port=port, api_port=api_port)
+                typer.echo(
+                    f"✅ Нода {name} зарегистрирована: id={result.get('id')}, "
+                    f"статус {result.get('status')}"
+                )
+                if result.get("status") != "connected":
+                    typer.echo(
+                        "Статус пока не connected — это нормально, подключение занимает "
+                        "до минуты. Проверьте: /nodes в боте"
+                    )
+        except MarzbanError as err:
+            typer.echo(f"Не удалось добавить ноду: {err}")
+            raise typer.Exit(code=1) from err
 
     asyncio.run(_run())
 

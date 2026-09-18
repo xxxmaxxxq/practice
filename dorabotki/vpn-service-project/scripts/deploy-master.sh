@@ -29,6 +29,12 @@ NODE_LOCATION="${NODE_LOCATION:-nl}"
 XRAY_PORT="${XRAY_PORT:-8443}"
 XRAY_SNI="${XRAY_SNI:-www.nvidia.com}"
 
+# Ноды для конфига Xray: код:порт:sni через пробел.
+# Панель раздаёт один конфиг на все ноды, поэтому порты должны быть
+# свободны на каждом сервере сразу. Значение берётся из окружения,
+# затем из .env, и только потом падает на единственную ноду по умолчанию.
+NODES="${NODES:-}"
+
 ACTION="${1:-up}"
 cd "$PROJECT_DIR"
 
@@ -61,6 +67,11 @@ MZ_PASS="$(read_env MARZBAN_PASSWORD)"
     echo 'PANEL_BASE_URL=https://panel.ваш-домен' >> .env"
 [[ -n "$MZ_USER" && -n "$MZ_PASS" ]] || fail "В .env нет MARZBAN_USERNAME или MARZBAN_PASSWORD"
 
+if [[ -z "$NODES" ]]; then
+    NODES="$(read_env NODES)"
+fi
+NODES="${NODES:-$NODE_CODE:$XRAY_PORT:$XRAY_SNI}"
+
 PUBLIC_HOST="$(host_of "$PUBLIC_URL")"
 PANEL_HOST="$(host_of "$PANEL_URL")"
 SERVER_IP="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || echo '')"
@@ -77,32 +88,25 @@ check_dns() {
     fi
 }
 
-generate_keys() {
+render_config() {
     mkdir -p "$GEN_DIR"
-    if [[ -f "$KEYS_FILE" ]]; then
-        log "Ключи Reality уже есть, переиспользую (перевыпуск разорвал бы работающие ключи)"
-        return
-    fi
-    log "Генерирую ключи Reality…"
-    dc run --rm --no-deps -T api python -m app.cli reality-keys > "$KEYS_FILE"
-    chmod 600 "$KEYS_FILE"
-}
 
-render_xray_config() {
-    local priv sid
-    priv="$(python3 -c "import json;print(json.load(open('$KEYS_FILE'))['private_key'])")"
-    sid="$(python3 -c "import json;print(json.load(open('$KEYS_FILE'))['short_id'])")"
+    local node_args=()
+    for node in $NODES; do
+        node_args+=(--node "$node")
+    done
 
-    sed -e "s|{{NODE_CODE}}|$NODE_CODE|g" \
-        -e "s|{{PORT}}|$XRAY_PORT|g" \
-        -e "s|{{SNI}}|$XRAY_SNI|g" \
-        -e "s|{{PRIVATE_KEY}}|$priv|g" \
-        -e "s|{{SHORT_ID}}|$sid|g" \
-        "$TEMPLATE" > "$XRAY_FILE"
+    log "Собираю конфиг Xray для нод: $NODES"
+    dc run --rm --no-deps -T \
+        -v "$GEN_DIR:/generated" \
+        api python -m app.cli render-xray-config \
+        "${node_args[@]}" \
+        --keys-file /generated/reality-keys.json \
+        --output /generated/xray_config.json
 
     python3 -c "import json;json.load(open('$XRAY_FILE'))" \
         || fail "Сгенерированный конфиг Xray невалиден"
-    log "Конфиг Xray собран: inbound VLESS_REALITY_$NODE_CODE на порту $XRAY_PORT, SNI $XRAY_SNI"
+    chmod 600 "$KEYS_FILE" 2>/dev/null || true
 }
 
 wait_for_panel() {
@@ -136,8 +140,7 @@ case "$ACTION" in
         log "Собираю образы…"
         dc build
 
-        generate_keys
-        render_xray_config
+        render_config
 
         # Конфиг кладём в том ДО первого старта: если панель не найдёт файл,
         # на который указывает XRAY_JSON, ядро Xray не поднимется вовсе
@@ -169,6 +172,44 @@ case "$ACTION" in
         log "Панель: $PANEL_URL   логин: $MZ_USER"
         log "Проверка сайта: curl $PUBLIC_URL/health"
         log "Ключи Reality лежат в $KEYS_FILE (в git не попадают)"
+        ;;
+
+    node-cert)
+        # Сертификат панели — его нужно положить на сервер новой ноды
+        dc exec -T api python -m app.cli node-cert
+        ;;
+
+    add-node)
+        # bash scripts/deploy-master.sh add-node ru-1 ru 185.246.220.115 2053 www.samsung.com
+        NEW_CODE="${2:?Укажите код ноды, например ru-1}"
+        NEW_LOCATION="${3:?Укажите локацию: nl или ru}"
+        NEW_HOST="${4:?Укажите IP сервера ноды}"
+        NEW_PORT="${5:-2053}"
+        NEW_SNI="${6:-www.samsung.com}"
+
+        log "Добавляю inbound для $NEW_CODE в конфиг Xray…"
+        NODES="$NODES $NEW_CODE:$NEW_PORT:$NEW_SNI"
+        render_config
+
+        log "Обновляю конфиг в панели…"
+        docker run --rm -v salt_marzban_data:/dst -v "$GEN_DIR":/src:ro \
+            alpine:3 sh -c 'cp /src/xray_config.json /dst/xray_config.json' >/dev/null
+        docker restart salt_marzban >/dev/null
+        sleep 15
+        wait_for_panel || fail "Панель не поднялась после обновления конфига"
+
+        log "Регистрирую ноду в панели…"
+        dc exec -T api python -m app.cli add-marzban-node \
+            --name "$NEW_CODE" --address "$NEW_HOST"
+
+        log "Прописываю host и запись в базе сервиса…"
+        dc exec -T api python -m app.cli setup-marzban \
+            --node-code "$NEW_CODE" --location "$NEW_LOCATION" \
+            --host "$NEW_HOST" --port "$NEW_PORT" --sni "$NEW_SNI"
+
+        echo
+        warn "Не забудьте добавить ноду в постоянный список, чтобы конфиг не терялся:"
+        echo "    echo 'NODES=\"$NODES\"' >> .env"
         ;;
 
     logs)    dc logs -f --tail 100 ;;
