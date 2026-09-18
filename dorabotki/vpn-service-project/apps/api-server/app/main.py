@@ -71,13 +71,17 @@ if MINIAPP_DIR.exists():
 
 @app.get("/health")
 async def health() -> dict:
-    """Проверка живости для мониторинга и Docker healthcheck."""
-    db_ok = redis_ok = True
-    try:
-        redis = get_redis()
-        await redis.ping()
-    except Exception:
-        redis_ok = False
+    """
+    Проверка живости для мониторинга и Docker healthcheck.
+
+    В локальном режиме Redis не используется (состояния бота живут в памяти),
+    поэтому его отсутствие не считается проблемой — иначе сервис вечно
+    рапортовал бы degraded и мониторинг звонил бы впустую.
+    """
+    db_ok = True
+    redis_ok = False
+    redis_required = not settings.local_mode
+
     try:
         from app.db import engine
 
@@ -86,8 +90,20 @@ async def health() -> dict:
     except Exception:
         db_ok = False
 
-    status = "ok" if db_ok and redis_ok else "degraded"
-    return {"status": status, "db": db_ok, "redis": redis_ok}
+    if redis_required:
+        try:
+            await get_redis().ping()
+            redis_ok = True
+        except Exception:
+            redis_ok = False
+
+    healthy = db_ok and (redis_ok or not redis_required)
+    return {
+        "status": "ok" if healthy else "degraded",
+        "mode": "local" if settings.local_mode else "production",
+        "db": db_ok,
+        "redis": redis_ok if redis_required else "not_used",
+    }
 
 
 # ── Ссылка-подписка ────────────────────────────────────────────────────────
