@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Тесты и линтер. Запускаются на каждый push и pull request.
+#  Зелёный прогон — обязательное условие для merge в test и main.
+# ═══════════════════════════════════════════════════════════════════════════
+name: Тесты API
+
+on:
+  push:
+    branches: [main, test, dev]
+    paths:
+      - 'vpn-service-project/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main, test, dev]
+
+jobs:
+  test:
+    name: Линтер и тесты
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vpn-service-project/apps/api-server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Поставить Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Установить зависимости
+        run: pip install -r requirements-dev.txt
+
+      - name: Линтер (ruff)
+        run: ruff check app
+
+      - name: Проверка форматирования
+        run: ruff format --check app
+
+      - name: Тесты
+        run: pytest -q
+        env:
+          BOT_TOKEN: '123456:TEST'
+          JWT_SECRET: test-secret
+
+  security:
+    name: Проверка на утечку секретов
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Секреты не должны попадать в репозиторий
+        run: |
+          # .env обязан быть только в виде примера
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "❌ Файл .env закоммичен — удалите его из индекса!"
+            exit 1
+          fi
+          # Ключи и сертификаты
+          if git ls-files | grep -E '\.(pem|key|crt|ovpn)$'; then
+            echo "❌ В репозитории найдены ключи или сертификаты!"
+            exit 1
+          fi
+          echo "✅ Секретов не найдено"

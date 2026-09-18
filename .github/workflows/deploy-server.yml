@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Автодеплой по SSH.
+#    push в test → тестовый стенд
+#    push в main → боевой сервер
+#
+#  Нужные секреты репозитория (Settings → Secrets and variables → Actions):
+#    PROD_HOST, PROD_USER, PROD_SSH_KEY      — боевой сервер
+#    TEST_HOST, TEST_USER, TEST_SSH_KEY      — тестовый стенд
+# ═══════════════════════════════════════════════════════════════════════════
+name: Деплой
+
+on:
+  push:
+    branches: [main, test]
+    paths:
+      - 'vpn-service-project/**'
+  workflow_dispatch:      # возможность запустить деплой вручную
+
+jobs:
+  deploy:
+    name: Выкатить на сервер
+    runs-on: ubuntu-latest
+    # Деплой только после зелёных тестов
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Определить целевой сервер
+        id: target
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "env_name=production" >> $GITHUB_OUTPUT
+          else
+            echo "env_name=test" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Подключиться и обновить сервис
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ github.ref_name == 'main' && secrets.PROD_HOST || secrets.TEST_HOST }}
+          username: ${{ github.ref_name == 'main' && secrets.PROD_USER || secrets.TEST_USER }}
+          key: ${{ github.ref_name == 'main' && secrets.PROD_SSH_KEY || secrets.TEST_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/vpn-service
+            git fetch origin ${{ github.ref_name }}
+            git checkout ${{ github.ref_name }}
+            git pull origin ${{ github.ref_name }}
+
+            cd vpn-service-project
+            # Бэкап перед выкаткой: откатиться всегда должно быть куда
+            bash scripts/backup-db.sh || echo "Бэкап пропущен"
+
+            docker compose -f docker/docker-compose.yml --env-file .env up -d --build
+            docker compose -f docker/docker-compose.yml --env-file .env exec -T api alembic upgrade head
+
+            # Проверяем, что сервис поднялся
+            sleep 10
+            curl -fsS http://localhost:8000/health || (echo "❌ Сервис не отвечает" && exit 1)
+            echo "✅ Деплой на ${{ steps.target.outputs.env_name }} завершён"
