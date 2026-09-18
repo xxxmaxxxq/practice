@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -200,7 +201,7 @@ class MarzbanClient:
         user = await self.get_user(username)
         if not user:
             return None
-        return user.get("subscription_url") or None
+        return subscription_path_of(user.get("subscription_url") or "")
 
     async def get_subscription_url(self, username: str) -> str:
         """Ссылка-подписка, которую импортирует приложение клиента."""
@@ -268,6 +269,24 @@ class MarzbanClient:
 
     async def get_system_stats(self) -> dict[str, Any]:
         return await self._request("GET", "/api/system") or {}
+
+
+def subscription_path_of(subscription_url: str) -> str | None:
+    """
+    Оставить от ссылки подписки только путь.
+
+    Когда панели задан XRAY_SUBSCRIPTION_URL_PREFIX (а он задан: клиенты
+    должны получать наш домен), она возвращает в subscription_url полный
+    адрес. Приклеивать его к внутреннему адресу панели нельзя — получается
+    строка вида http://marzban:8080https://... и запрос падает.
+    """
+    if not subscription_url:
+        return None
+    parts = urlsplit(subscription_url)
+    path = parts.path
+    if not path:
+        return None
+    return f"{path}?{parts.query}" if parts.query else path
 
 
 def filter_available(

@@ -130,6 +130,38 @@ docker compose -f docker/docker-compose.master.yml exec api \
 
 ---
 
+## Если ключ не выдаётся
+
+Первым делом — диагностика. Она проходит весь путь выдачи и показывает,
+на каком шаге он рвётся:
+
+```bash
+docker exec salt_api python -m app.cli doctor --telegram-id ВАШ_ID
+```
+
+Пример здорового вывода:
+
+```
+✓ Пользователь: tg=495414590, аккаунт u495414590
+✓ Подписка: multi, trial, осталось 2 дн.
+✓ Ноды под тариф: nl-1
+✓ Панель отвечает, inbounds: {'vless': ['VLESS_REALITY_nl-1']}
+✓ Аккаунт в панели: статус active, inbounds {'vless': ['VLESS_REALITY_nl-1']}
+✓ Путь подписки в панели: /sub/eyJhbGciOiJIUzI1NiIsInR5cCI6...
+✓ Конфиги: HTTP 200, длина 412
+✓ Серверов в подписке: 1
+    vless://c7e337fd-...@194.87.35.88:8443?security=reality&sni=www.nvidia.com...
+```
+
+Где обычно рвётся:
+
+| Строка с ✗ | Причина и что делать |
+|---|---|
+| Нет ноды под тариф | `python -m app.cli setup-marzban --host IP` |
+| Панель недоступна | Панель не поднялась: `docker logs salt_marzban` |
+| Аккаунта нет в панели | Создастся сам при проверке; если нет — смотрите ошибку выше |
+| Серверов в подписке: 0 | В панели нет host для inbound: `setup-marzban` |
+
 ## Частые вопросы
 
 **Ключ импортировался, но интернет не идёт.**

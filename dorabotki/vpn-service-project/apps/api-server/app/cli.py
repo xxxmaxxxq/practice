@@ -18,7 +18,7 @@ import typer
 import yaml
 from sqlalchemy import select
 
-from app.config import CONFIG_DIR
+from app.config import CONFIG_DIR, get_settings
 from app.db import session_scope
 from app.models import Node, NodeStatus, Subscription, SubscriptionStatus, utcnow
 from app.services import healing
@@ -184,6 +184,103 @@ def expire_user(
             user.subscription.paused_until = None
             await sub_service.expire(session, user, user.subscription)
             typer.echo(f"✅ Подписка tg={telegram_id} завершена. Напишите боту /start")
+
+    asyncio.run(_run())
+
+
+@cli.command("doctor")
+def doctor(
+    telegram_id: int = typer.Option(..., help="Telegram ID пользователя для проверки"),
+) -> None:
+    """
+    Пройти весь путь выдачи ключа и показать, где он рвётся.
+
+    Проверяет по шагам: пользователь в базе → подписка → связь с панелью →
+    inbounds → аккаунт в панели → путь подписки → сами конфиги.
+    Вместо чтения логов сразу видно место поломки.
+    """
+
+    async def _run() -> None:
+        from app.marzban import MarzbanClient, MarzbanError
+
+        ok = "\033[1;32m✓\033[0m"
+        bad = "\033[1;31m✗\033[0m"
+
+        async with session_scope() as session:
+            user = await user_service.get_by_telegram_id(session, telegram_id)
+            if user is None:
+                typer.echo(f"{bad} Пользователь tg={telegram_id} не найден в базе")
+                raise typer.Exit(code=1)
+            typer.echo(f"{ok} Пользователь: tg={telegram_id}, аккаунт {user.marzban_username}")
+
+            sub = user.subscription
+            if sub is None:
+                typer.echo(f"{bad} Подписки нет. Нажмите «Попробовать» в боте")
+                raise typer.Exit(code=1)
+            typer.echo(
+                f"{ok} Подписка: {sub.tariff_code}, {sub.status}, " f"осталось {sub.days_left} дн."
+            )
+
+            nodes = await sub_service.nodes_for_tariff(session, sub.tariff_code)
+            if not nodes:
+                typer.echo(f"{bad} Под тариф {sub.tariff_code} нет ни одной ноды в базе")
+                raise typer.Exit(code=1)
+            typer.echo(f"{ok} Ноды под тариф: {', '.join(n.code for n in nodes)}")
+
+            try:
+                async with MarzbanClient() as mz:
+                    inbounds = await mz.list_inbounds()
+                    typer.echo(f"{ok} Панель отвечает, inbounds: {inbounds}")
+
+                    account = await mz.get_user(user.marzban_username)
+                    if account is None:
+                        typer.echo(f"{bad} Аккаунта нет в панели — создаю…")
+                        await sub_service.sync_to_marzban(session, user, sub)
+                        account = await mz.get_user(user.marzban_username)
+                    if account is None:
+                        typer.echo(f"{bad} Создать аккаунт не удалось")
+                        raise typer.Exit(code=1)
+                    typer.echo(
+                        f"{ok} Аккаунт в панели: статус {account.get('status')}, "
+                        f"inbounds {account.get('inbounds')}"
+                    )
+
+                    path = await mz.get_subscription_path(user.marzban_username)
+                    typer.echo(f"{ok} Путь подписки в панели: {path}")
+
+                    if not path:
+                        typer.echo(f"{bad} Панель не вернула ссылку подписки")
+                        raise typer.Exit(code=1)
+
+                    url = f"{get_settings().marzban_base_url.rstrip('/')}{path}"
+                    resp = await mz._client.get(url, headers={"User-Agent": "Happ"})
+                    body = resp.text.strip()
+                    typer.echo(f"{ok} Конфиги: HTTP {resp.status_code}, длина {len(body)}")
+
+                    if resp.status_code == 200 and body:
+                        import base64 as b64
+
+                        try:
+                            decoded = b64.b64decode(body + "=" * (-len(body) % 4)).decode()
+                        except Exception:
+                            decoded = body
+                        lines = [ln for ln in decoded.splitlines() if ln.strip()]
+                        typer.echo(f"{ok} Серверов в подписке: {len(lines)}")
+                        for line in lines[:3]:
+                            typer.echo(f"    {line[:90]}")
+                        if not lines:
+                            typer.echo(
+                                f"{bad} Подписка пустая: в панели нет host для inbound. "
+                                f"Запустите setup-marzban"
+                            )
+                    else:
+                        typer.echo(f"{bad} Панель вернула пустой ответ")
+
+            except MarzbanError as err:
+                typer.echo(f"{bad} Панель недоступна: {err}")
+                raise typer.Exit(code=1) from err
+
+        typer.echo("\nПроверка завершена")
 
     asyncio.run(_run())
 
