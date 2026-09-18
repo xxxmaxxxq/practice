@@ -30,7 +30,7 @@
 {$PANEL_DOMAIN} {
     encode gzip
 
-    reverse_proxy marzban:8000 {
+    reverse_proxy marzban:8080 {
         header_up X-Real-IP {remote_host}
     }
 

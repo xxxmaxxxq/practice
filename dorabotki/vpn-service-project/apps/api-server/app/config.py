@@ -79,7 +79,9 @@ class Settings(BaseSettings):
     redis_password: str = ""
 
     # ── Marzban ────────────────────────────────────────────────────────────
-    marzban_base_url: str = "http://marzban:8000"
+    # Панель отдаётся через сайдкар marzban-proxy: сама она слушает
+    # только localhost, пока ей не дать SSL-сертификаты
+    marzban_base_url: str = "http://marzban:8080"
     marzban_username: str = "admin"
     marzban_password: str = ""
     marzban_subscription_url: str = ""
