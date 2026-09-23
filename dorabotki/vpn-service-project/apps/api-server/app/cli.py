@@ -417,6 +417,15 @@ def doctor(
         ok = "\033[1;32m✓\033[0m"
         bad = "\033[1;31m✗\033[0m"
 
+        # Заводские секреты — первое, что стоит увидеть перед выкаткой:
+        # с ними служебные ручки и приём апдейтов Telegram открыты любому
+        insecure = get_settings().insecure_defaults()
+        if insecure:
+            typer.echo(f"{bad} В .env не заменены секреты: {', '.join(insecure)}")
+            typer.echo("    Новое значение: openssl rand -hex 32")
+        else:
+            typer.echo(f"{ok} Секреты в .env заменены")
+
         async with session_scope() as session:
             user = await user_service.get_by_telegram_id(session, telegram_id)
             if user is None:
@@ -429,7 +438,7 @@ def doctor(
                 typer.echo(f"{bad} Подписки нет. Нажмите «Попробовать» в боте")
                 raise typer.Exit(code=1)
             typer.echo(
-                f"{ok} Подписка: {sub.tariff_code}, {sub.status}, " f"осталось {sub.days_left} дн."
+                f"{ok} Подписка: {sub.tariff_code}, {sub.status}, осталось {sub.days_left} дн."
             )
 
             nodes = await sub_service.nodes_for_tariff(session, sub.tariff_code)
@@ -547,9 +556,7 @@ def refresh_hosts() -> None:
         from app.marzban import MarzbanClient, MarzbanError
 
         async with session_scope() as session:
-            nodes = list(
-                (await session.execute(select(Node).order_by(Node.code))).scalars()
-            )
+            nodes = list((await session.execute(select(Node).order_by(Node.code))).scalars())
 
         if not nodes:
             typer.echo("В базе нет ни одной ноды — сначала setup-marzban")

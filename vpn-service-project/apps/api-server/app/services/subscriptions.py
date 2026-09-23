@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings, get_tariffs, limits, tariff_by_code
-from app.marzban import MarzbanClient, MarzbanError, build_inbounds
+from app.marzban import MarzbanClient, MarzbanError, build_inbounds, filter_available
 from app.models import (
     Node,
     NodeStatus,
@@ -84,6 +84,17 @@ async def sync_to_marzban(
 
     try:
         async with MarzbanClient() as mz:
+            # Сверяемся с панелью: просим только те inbounds, которые в ней есть
+            available = await mz.list_inbounds()
+            inbounds = filter_available(inbounds, available)
+            if not inbounds:
+                log.error(
+                    "В панели нет ни одного нужного inbound (ожидали %s). "
+                    "Проверьте конфигурацию Xray.",
+                    [n.code for n in nodes],
+                )
+                return None
+
             existing = await mz.get_user(user.marzban_username)
             note = f"tg={user.telegram_id} tariff={subscription.tariff_code} devices={device_limit}"
 
@@ -109,6 +120,27 @@ async def sync_to_marzban(
     except MarzbanError as err:
         log.error("Marzban недоступен при синхронизации tg=%s: %s", user.telegram_id, err)
         return None
+
+
+def panel_is_stale(panel_user: dict | None, subscription: Subscription) -> bool:
+    """
+    Разошёлся ли срок в панели с тем, что записано у нас.
+
+    Оплата и синхронизация с панелью — два разных шага, и второй может
+    не состояться: панель перезагружается, сеть моргнула. Деньги при этом
+    уже зачтены, дни в нашей базе добавлены, а в панели остался старый
+    срок — пользователь заплатил и сидит без доступа. Поэтому при каждой
+    выдаче подписки сверяем сроки и при расхождении синхронизируем заново.
+
+    Минута допуска — на округление: панель хранит срок целыми секундами.
+    """
+    if not panel_user:
+        return True
+    expire = panel_user.get("expire")
+    if not expire:
+        # Бессрочный аккаунт в панели при срочной подписке у нас — тоже расхождение
+        return True
+    return abs(int(expire) - int(subscription.expires_at.timestamp())) > 60
 
 
 def subscription_url(user: User) -> str:

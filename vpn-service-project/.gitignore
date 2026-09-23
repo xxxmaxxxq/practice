@@ -16,6 +16,7 @@ Thumbs.db
 *.pem
 *.ovpn
 config/live/
+config/generated/          # ключи Reality и собранный конфиг Xray
 config/**/*.private.json
 xray_keys.txt
 reality_keys.txt

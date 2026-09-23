@@ -16,6 +16,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.config import get_settings, text
 from app.utils import deeplink
+from app.utils.deeplink import APP_STORES
 
 settings = get_settings()
 
@@ -25,6 +26,58 @@ def _btn(key: str) -> str:
 
 
 # ── Онбординг ──────────────────────────────────────────────────────────────
+
+
+def main_menu_button() -> InlineKeyboardButton:
+    """
+    Кнопка возврата в начало.
+
+    Ставится последней строкой на всех вложенных экранах: у конкурентов
+    (Quattro, Atom) это главный способ не потеряться в переписке.
+    """
+    return InlineKeyboardButton(text=_btn("main_menu"), callback_data="menu:main")
+
+
+def main_menu(
+    has_subscription: bool = False, is_trial_available: bool = False
+) -> InlineKeyboardMarkup:
+    """
+    Главное меню — единый экран с разделами.
+
+    Разделы те же, что в синем меню «Меню» рядом с полем ввода, чтобы
+    человек находил нужное любым привычным способом. Ряды задаются явно:
+    состав меню меняется (у новичка есть кнопка триала, у подписчика —
+    продление), и автоматическая разбивка в этом случае ломает раскладку.
+    """
+    kb = InlineKeyboardBuilder()
+
+    if is_trial_available:
+        kb.row(InlineKeyboardButton(text=_btn("trial"), callback_data="trial:activate"))
+
+    kb.row(
+        InlineKeyboardButton(text=_btn("account"), callback_data="account:show"),
+        InlineKeyboardButton(
+            text=_btn("extend") if has_subscription else _btn("buy"),
+            callback_data="buy:menu",
+        ),
+    )
+    kb.row(
+        InlineKeyboardButton(text=_btn("connect"), callback_data="connect:show"),
+        InlineKeyboardButton(text=_btn("referral"), callback_data="ref:show"),
+    )
+    kb.row(
+        InlineKeyboardButton(text=_btn("instruction"), callback_data="connect:help"),
+        InlineKeyboardButton(text=_btn("support"), callback_data="support:contact"),
+    )
+
+    if _https_ready():
+        kb.row(
+            InlineKeyboardButton(
+                text=_btn("miniapp"),
+                web_app=WebAppInfo(url=f"{settings.public_base_url.rstrip('/')}/app"),
+            )
+        )
+    return kb.as_markup()
 
 
 def start_new_user() -> InlineKeyboardMarkup:
@@ -71,6 +124,22 @@ def connect_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text=_btn("other_app"), callback_data="connect:apps"))
     kb.row(InlineKeyboardButton(text=_btn("instruction"), callback_data="connect:help"))
     kb.row(InlineKeyboardButton(text=_btn("copy_link"), callback_data="connect:link"))
+    kb.row(main_menu_button())
+    return kb.as_markup()
+
+
+def help_keyboard() -> InlineKeyboardMarkup:
+    """Экран помощи: ссылки на приложения и возврат в меню."""
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📱 Happ для iPhone", url=APP_STORES["happ_ios"]))
+    kb.row(InlineKeyboardButton(text="🤖 Happ для Android", url=APP_STORES["happ_android"]))
+    kb.row(
+        InlineKeyboardButton(
+            text="💻 Hiddify для Windows и macOS", url=APP_STORES["hiddify_desktop"]
+        )
+    )
+    kb.row(InlineKeyboardButton(text=_btn("not_working"), callback_data="heal:start"))
+    kb.row(main_menu_button())
     return kb.as_markup()
 
 
@@ -109,6 +178,7 @@ def account_keyboard(
                 web_app=WebAppInfo(url=f"{settings.public_base_url.rstrip('/')}/app"),
             )
         )
+    kb.row(main_menu_button())
     kb.adjust(2, 2, 1)
     return kb.as_markup()
 
@@ -125,7 +195,7 @@ def tariffs_keyboard(showcase: list[dict]) -> InlineKeyboardMarkup:
             text=f"{tariff['title']} — от {price} ₽{badge}",
             callback_data=f"buy:tariff:{tariff['code']}",
         )
-    kb.button(text=_btn("back"), callback_data="account:show")
+    kb.button(text=_btn("main_menu"), callback_data="menu:main")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -188,7 +258,7 @@ def healing_result_keyboard(subscription_url: str) -> InlineKeyboardMarkup:
             )
         )
     kb.row(InlineKeyboardButton(text=_btn("support"), callback_data="support:contact"))
-    kb.row(InlineKeyboardButton(text=_btn("back"), callback_data="account:show"))
+    kb.row(main_menu_button())
     return kb.as_markup()
 
 
@@ -203,7 +273,7 @@ def support_keyboard() -> InlineKeyboardMarkup:
         )
     if settings.news_channel_url:
         kb.row(InlineKeyboardButton(text="📢 Канал сервиса", url=settings.news_channel_url))
-    kb.row(InlineKeyboardButton(text=_btn("back"), callback_data="account:show"))
+    kb.row(main_menu_button())
     return kb.as_markup()
 
 
@@ -228,5 +298,5 @@ def referral_keyboard(link: str) -> InlineKeyboardMarkup:
             url=f"https://t.me/share/url?url={link}&text={share_text}",
         )
     )
-    kb.row(InlineKeyboardButton(text=_btn("back"), callback_data="account:show"))
+    kb.row(main_menu_button())
     return kb.as_markup()

@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
 
     # ── Telegram ───────────────────────────────────────────────────────────
+    # Название сервиса: попадает в заголовок подписки и отображается
+    # в клиентских приложениях вместо адреса сервера
+    service_name: str = "SaltVPN"
+
     bot_token: str = ""
     bot_username: str = "your_vpn_bot"
     admin_ids: str = ""
@@ -75,7 +79,9 @@ class Settings(BaseSettings):
     redis_password: str = ""
 
     # ── Marzban ────────────────────────────────────────────────────────────
-    marzban_base_url: str = "http://marzban:8000"
+    # Панель отдаётся через сайдкар marzban-proxy: сама она слушает
+    # только localhost, пока ей не дать SSL-сертификаты
+    marzban_base_url: str = "http://marzban:8080"
     marzban_username: str = "admin"
     marzban_password: str = ""
     marzban_subscription_url: str = ""
@@ -140,6 +146,22 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.env.lower() == "production"
+
+    def insecure_defaults(self) -> list[str]:
+        """
+        Секреты, оставшиеся заводскими.
+
+        JWT_SECRET солит хеши IP, API_INTERNAL_TOKEN закрывает служебные
+        ручки, TELEGRAM_WEBHOOK_SECRET отличает настоящие апдейты Telegram
+        от поддельных. Все три лежат в .env.example со значением change_me,
+        и забыть их заменить — значит открыть сервис постороннему.
+        """
+        fields = {
+            "JWT_SECRET": self.jwt_secret,
+            "API_INTERNAL_TOKEN": self.api_internal_token,
+            "TELEGRAM_WEBHOOK_SECRET": self.telegram_webhook_secret,
+        }
+        return sorted(name for name, value in fields.items() if value in ("", "change_me"))
 
 
 def _load_yaml(name: str) -> dict[str, Any]:

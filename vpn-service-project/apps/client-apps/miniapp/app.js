@@ -222,10 +222,17 @@ async function createOrder(tariffCode, months, provider) {
 // ── Действия ─────────────────────────────────────────────────────────
 function bindEvents() {
   document.getElementById('btn-connect').onclick = () => {
-    const link = state?.deeplinks?.happ;
-    if (link) {
-      tg?.HapticFeedback?.impactOccurred('medium');
-      tg.openLink(link);
+    tg?.HapticFeedback?.impactOccurred('medium');
+    // Telegram.WebApp.openLink умеет только http(s): на happ://add/... она
+    // молча ничего не делает — именно поэтому кнопка «не работала».
+    // Ведём на нашу https-страницу, она уже открывает приложение.
+    if (state?.import_url) {
+      tg.openLink(state.import_url, { try_instant_view: false });
+      return;
+    }
+    // Запасной путь: из WebView переход по своей схеме обычно срабатывает
+    if (state?.deeplinks?.happ) {
+      window.location.href = state.deeplinks.happ;
     }
   };
 
@@ -275,8 +282,10 @@ function bindEvents() {
     try {
       const result = await api('/api/miniapp/heal', { method: 'POST' });
       toast('Готово! Обновите подписку в приложении');
-      if (result.subscription_url) {
-        setTimeout(() => tg.openLink(`happ://import/${result.subscription_url}`), 800);
+      // Та же причина: открываем https-страницу, а не схему приложения
+      const page = state?.import_url || result.subscription_url?.replace('/sub/', '/i/');
+      if (page) {
+        setTimeout(() => tg.openLink(page, { try_instant_view: false }), 800);
       }
     } catch (err) {
       toast('Не получилось автоматически — напишите в поддержку');

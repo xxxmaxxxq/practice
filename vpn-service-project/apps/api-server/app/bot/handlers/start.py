@@ -45,16 +45,42 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         if is_new and command.args and command.args.startswith("ref_"):
             await ref_service.attach_referrer(session, user, command.args[4:])
 
-        if is_new or user.subscription is None:
+        name = user_service.display_name(tg_user.first_name, tg_user.username)
+
+        # Новичку связь с подпиской не нужна — проверяем флаг до обращения к ней
+        if is_new:
+            await message.answer(text("start_new", name=name), reply_markup=kb.start_new_user())
+            return
+
+        subscription = user.subscription
+        if subscription is None and not user.trial_used:
+            await message.answer(text("start_new", name=name), reply_markup=kb.start_new_user())
+            return
+
+        # Заморозил сам и вернулся: напоминаем, что дни целы
+        if subscription is not None and subscription.status == SubscriptionStatus.PAUSED:
+            until = subscription.paused_until
             await message.answer(
-                text("start_new", name=tg_user.first_name or "друг"),
-                reply_markup=kb.start_new_user(),
+                text("start_paused", name=name, until_date=until.strftime("%d.%m.%Y")),
+                reply_markup=kb.start_returning_user(),
             )
             return
 
-        status_line = _status_line(user)
+        # Подписка закончилась: снимаем страх «настраивать заново» и зовём обратно
+        if subscription is None or not subscription.is_active:
+            expires = (
+                subscription.expires_at.strftime("%d.%m.%Y")
+                if subscription
+                else "некоторое время назад"
+            )
+            await message.answer(
+                text("start_expired", name=name, expires_date=expires),
+                reply_markup=kb.start_returning_user(),
+            )
+            return
+
         await message.answer(
-            text("start_returning", name=tg_user.first_name or "друг", status_line=status_line),
+            text("start_returning", name=name, status_line=_status_line(user)),
             reply_markup=kb.start_returning_user(),
         )
 

@@ -79,8 +79,7 @@ async def main() -> None:
         # стартовал одной командой, без Postgres и миграций
         await create_all_tables()
         log.info(
-            "Режим хранения: SQLite %s, состояния бота в памяти "
-            "(Postgres и Redis не используются)",
+            "Режим хранения: SQLite %s, состояния бота в памяти (Postgres и Redis не используются)",
             settings.sqlite_path,
         )
 

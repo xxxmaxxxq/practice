@@ -60,6 +60,9 @@ class MeResponse(BaseModel):
     user: UserInfo
     subscription: SubscriptionInfo | None
     subscription_url: str
+    # https-адрес страницы импорта: Telegram.WebApp.openLink умеет только
+    # http(s), поэтому кнопка в Mini App ведёт сюда, а не на happ://
+    import_url: str
     deeplinks: dict[str, str]
     referrals: ReferralInfo
     personal_offer: dict | None = None

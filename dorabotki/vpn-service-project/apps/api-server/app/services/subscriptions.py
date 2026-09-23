@@ -122,6 +122,27 @@ async def sync_to_marzban(
         return None
 
 
+def panel_is_stale(panel_user: dict | None, subscription: Subscription) -> bool:
+    """
+    Разошёлся ли срок в панели с тем, что записано у нас.
+
+    Оплата и синхронизация с панелью — два разных шага, и второй может
+    не состояться: панель перезагружается, сеть моргнула. Деньги при этом
+    уже зачтены, дни в нашей базе добавлены, а в панели остался старый
+    срок — пользователь заплатил и сидит без доступа. Поэтому при каждой
+    выдаче подписки сверяем сроки и при расхождении синхронизируем заново.
+
+    Минута допуска — на округление: панель хранит срок целыми секундами.
+    """
+    if not panel_user:
+        return True
+    expire = panel_user.get("expire")
+    if not expire:
+        # Бессрочный аккаунт в панели при срочной подписке у нас — тоже расхождение
+        return True
+    return abs(int(expire) - int(subscription.expires_at.timestamp())) > 60
+
+
 def subscription_url(user: User) -> str:
     """Наша собственная ссылка-подписка (проксирует Marzban через /sub/{token})."""
     return f"{settings.public_base_url.rstrip('/')}/sub/{user.subscription_token}"

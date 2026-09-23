@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
@@ -212,6 +212,122 @@ async def cmd_give(message: Message, command: CommandObject) -> None:
         )
     except Exception as err:  # пользователь мог заблокировать бота
         log.warning("Не удалось уведомить tg=%s: %s", telegram_id, err)
+
+
+def _fmt_traffic(used_bytes: int) -> str:
+    gb = used_bytes / 1024**3
+    return f"{gb:.1f} ГБ" if gb >= 0.1 else f"{used_bytes / 1024**2:.0f} МБ"
+
+
+def _tg_id_from_marzban(username: str) -> int | None:
+    """Имя аккаунта в панели — это u<telegram_id>."""
+    return int(username[1:]) if username.startswith("u") and username[1:].isdigit() else None
+
+
+@router.message(Command("users"))
+async def cmd_users(message: Message) -> None:
+    """
+    Список подписчиков: тариф, остаток дней, трафик, активность.
+
+    IP-адресов в списке нет намеренно: логи подключений не ведутся,
+    панель хранит только факт активности и объём трафика.
+    """
+    from app.marzban import MarzbanClient, MarzbanError
+
+    # Активность берём из панели, всё остальное — из своей базы
+    activity: dict[str, dict] = {}
+    try:
+        async with MarzbanClient() as mz:
+            for account in await mz.list_users():
+                activity[account.get("username", "")] = account
+    except MarzbanError as err:
+        log.warning("Панель недоступна для /users: %s", err)
+
+    async with session_scope() as session:
+        result = await session.execute(
+            select(User, Subscription)
+            .join(Subscription, Subscription.user_id == User.id)
+            .order_by(Subscription.expires_at.desc())
+            .limit(30)
+        )
+        rows = result.all()
+
+        if not rows:
+            await message.answer("Подписчиков пока нет")
+            return
+
+        icons = {"active": "✅", "trial": "🎁", "paused": "⏸", "expired": "❌"}
+        lines = [f"👥 <b>Подписчики</b> (показаны {len(rows)})\n"]
+
+        for user, subscription in rows:
+            account = activity.get(user.marzban_username or "", {})
+            online_at = account.get("online_at")
+            traffic = _fmt_traffic(int(account.get("used_traffic", 0) or 0))
+
+            if online_at:
+                seen = datetime.fromisoformat(online_at.replace("Z", "+00:00"))
+                minutes = int((utcnow() - seen).total_seconds() // 60)
+                activity_text = (
+                    "🟢 сейчас"
+                    if minutes < 5
+                    else f"был {minutes // 60}ч назад"
+                    if minutes >= 60
+                    else f"был {minutes} мин назад"
+                )
+            else:
+                activity_text = "не подключался"
+
+            handle = f"@{user.username}" if user.username else f"tg={user.telegram_id}"
+            lines.append(
+                f"{icons.get(subscription.status, '·')} <b>{handle}</b> · "
+                f"{subscription.tariff_code} · {subscription.days_left} дн.\n"
+                f"    {traffic} · {activity_text} · <code>{user.telegram_id}</code>"
+            )
+
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("online"))
+async def cmd_online(message: Message) -> None:
+    """Кто пользуется VPN прямо сейчас (активность за последние 5 минут)."""
+    from app.marzban import MarzbanClient, MarzbanError
+
+    try:
+        async with MarzbanClient() as mz:
+            accounts = await mz.list_users()
+    except MarzbanError as err:
+        await message.answer(f"Панель недоступна: {err}")
+        return
+
+    now = utcnow()
+    online = []
+    for account in accounts:
+        online_at = account.get("online_at")
+        if not online_at:
+            continue
+        seen = datetime.fromisoformat(online_at.replace("Z", "+00:00"))
+        if (now - seen).total_seconds() <= 300:
+            online.append((account.get("username", ""), account))
+
+    if not online:
+        await message.answer("🌙 Сейчас никто не подключён")
+        return
+
+    lines = [f"🟢 <b>Онлайн: {len(online)}</b>\n"]
+    async with session_scope() as session:
+        for username, account in online:
+            telegram_id = _tg_id_from_marzban(username)
+            user = (
+                await user_service.get_by_telegram_id(session, telegram_id) if telegram_id else None
+            )
+            handle = f"@{user.username}" if user and user.username else username
+            app_name = (account.get("sub_last_user_agent") or "—").split("/")[0][:20]
+            lines.append(
+                f"· <b>{handle}</b> · {_fmt_traffic(int(account.get('used_traffic', 0) or 0))}"
+                f" · {app_name}"
+            )
+
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("nodes"))

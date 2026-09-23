@@ -147,6 +147,22 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.env.lower() == "production"
 
+    def insecure_defaults(self) -> list[str]:
+        """
+        Секреты, оставшиеся заводскими.
+
+        JWT_SECRET солит хеши IP, API_INTERNAL_TOKEN закрывает служебные
+        ручки, TELEGRAM_WEBHOOK_SECRET отличает настоящие апдейты Telegram
+        от поддельных. Все три лежат в .env.example со значением change_me,
+        и забыть их заменить — значит открыть сервис постороннему.
+        """
+        fields = {
+            "JWT_SECRET": self.jwt_secret,
+            "API_INTERNAL_TOKEN": self.api_internal_token,
+            "TELEGRAM_WEBHOOK_SECRET": self.telegram_webhook_secret,
+        }
+        return sorted(name for name, value in fields.items() if value in ("", "change_me"))
+
 
 def _load_yaml(name: str) -> dict[str, Any]:
     path = CONFIG_DIR / name

@@ -44,3 +44,17 @@ def test_build_inbounds_tags_match_templates():
     assert inbounds["vless"] == ["VLESS_REALITY_nl-1", "VLESS_REALITY_nl-2"]
     assert inbounds["hysteria2"] == ["HY2_nl-1", "HY2_nl-2"]
     assert inbounds["shadowsocks"] == ["SS2022_nl-1", "SS2022_nl-2"]
+
+
+def test_subscription_path_strips_absolute_url():
+    """
+    Панели задан XRAY_SUBSCRIPTION_URL_PREFIX, поэтому в subscription_url она
+    возвращает полный адрес. Приклеивание его к внутреннему адресу давало
+    строку http://marzban:8080https://... и ответ 500 у клиента.
+    """
+    from app.marzban import subscription_path_of
+
+    assert subscription_path_of("https://vpn.example.com/sub/tok123") == "/sub/tok123"
+    assert subscription_path_of("/sub/tok123") == "/sub/tok123"
+    assert subscription_path_of("https://vpn.example.com/sub/t?x=1") == "/sub/t?x=1"
+    assert subscription_path_of("") is None

@@ -13,9 +13,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from aiogram import Dispatcher
+from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import BotCommand, BotCommandScopeDefault, MenuButtonCommands
 
 from app.bot.handlers import router
 from app.bot.notifications import create_bot
@@ -44,6 +45,32 @@ def build_dispatcher() -> Dispatcher:
     return dispatcher
 
 
+# Пункты синего меню «Меню» рядом с полем ввода.
+# Так сделано у конкурентов (Atom, Quattro): человек видит список разделов
+# и не ищет нужную кнопку в переписке.
+BOT_COMMANDS = [
+    BotCommand(command="start", description="🏠 Главное меню"),
+    BotCommand(command="account", description="👤 Личный кабинет"),
+    BotCommand(command="buy", description="💳 Покупка и продление"),
+    BotCommand(command="connect", description="⚡ Подключение и ключи"),
+    BotCommand(command="ref", description="👥 Пригласить друзей"),
+    BotCommand(command="help", description="📖 Помощь и инструкции"),
+    BotCommand(command="support", description="💬 Поддержка"),
+]
+
+
+async def setup_bot_menu(bot: Bot) -> None:
+    """
+    Зарегистрировать команды и включить кнопку «Меню».
+
+    Вызывается при каждом старте: список команд хранится на стороне Telegram,
+    и после правки BOT_COMMANDS достаточно перезапустить бота.
+    """
+    await bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    log.info("Меню бота обновлено: %s команд", len(BOT_COMMANDS))
+
+
 async def main() -> None:
     setup_logging("bot")
 
@@ -51,10 +78,8 @@ async def main() -> None:
         # Локальный запуск: создаём таблицы в файле SQLite, чтобы бот
         # стартовал одной командой, без Postgres и миграций
         await create_all_tables()
-        log.warning(
-            "ЛОКАЛЬНЫЙ РЕЖИМ: база %s, состояния в памяти. "
-            "Интерфейс бота работает полностью; ключи VPN не выдаются, "
-            "пока не подключена панель Marzban.",
+        log.info(
+            "Режим хранения: SQLite %s, состояния бота в памяти (Postgres и Redis не используются)",
             settings.sqlite_path,
         )
 
@@ -62,7 +87,17 @@ async def main() -> None:
     dispatcher = build_dispatcher()
 
     me = await bot.get_me()
+    await setup_bot_menu(bot)
     log.info("Бот запущен: @%s (режим %s)", me.username, settings.bot_mode)
+
+    # Частая причина «кнопка подключения не появилась»: адрес по умолчанию
+    if not settings.public_base_url.startswith("https://"):
+        log.warning(
+            "PUBLIC_BASE_URL=%s — не https. Telegram не пропускает такие адреса "
+            "в кнопки, поэтому ссылка-подписка будет отправляться текстом. "
+            "Укажите свой домен в .env, чтобы появилась кнопка «Подключить в 1 клик».",
+            settings.public_base_url,
+        )
 
     try:
         if settings.bot_mode == "webhook":

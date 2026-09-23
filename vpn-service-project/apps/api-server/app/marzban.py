@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -190,6 +191,18 @@ class MarzbanClient:
     async def reset_traffic(self, username: str) -> None:
         await self._request("POST", f"/api/user/{username}/reset")
 
+    async def get_subscription_path(self, username: str) -> str | None:
+        """
+        Внутренний путь подписки, например /sub/eyJ0eXAiOi...
+
+        Панель отдаёт конфиги не по имени аккаунта, а по собственному токену:
+        запрос к /sub/<имя> она честно не находит и отвечает 404.
+        """
+        user = await self.get_user(username)
+        if not user:
+            return None
+        return subscription_path_of(user.get("subscription_url") or "")
+
     async def get_subscription_url(self, username: str) -> str:
         """Ссылка-подписка, которую импортирует приложение клиента."""
         user = await self.get_user(username)
@@ -203,6 +216,31 @@ class MarzbanClient:
         """Использованный трафик в байтах за текущий период."""
         user = await self.get_user(username)
         return int(user.get("used_traffic", 0)) if user else 0
+
+    async def list_inbounds(self) -> dict[str, list[str]]:
+        """
+        Какие inbounds настроены в панели: {протокол: [теги]}.
+
+        Нужно, чтобы не отправлять в Marzban теги несуществующих inbounds:
+        панель отвечает на такое ошибкой, и пользователь остаётся без ключа.
+        """
+        data = await self._request("GET", "/api/inbounds") or {}
+        result: dict[str, list[str]] = {}
+        for protocol, inbounds in data.items():
+            tags = [i.get("tag") for i in inbounds if i.get("tag")]
+            if tags:
+                result[protocol] = tags
+        return result
+
+    async def list_users(self, limit: int = 200) -> list[dict[str, Any]]:
+        """
+        Аккаунты панели: статус, трафик, время последней активности.
+
+        IP-адресов здесь нет и быть не может: access-логи Xray выключены,
+        панель хранит только факт активности (online_at) и объём трафика.
+        """
+        data = await self._request("GET", f"/api/users?limit={limit}") or {}
+        return data.get("users", [])
 
     # ── Ноды ───────────────────────────────────────────────────────────────
 
@@ -218,6 +256,34 @@ class MarzbanClient:
         except MarzbanError:
             return False
         return node.get("status") == "connected"
+
+    async def get_node_settings(self) -> dict[str, Any]:
+        """Сертификат и требования к версии ноды — нужны при подключении новой."""
+        return await self._request("GET", "/api/node/settings") or {}
+
+    async def add_node(
+        self,
+        name: str,
+        address: str,
+        port: int = 62050,
+        api_port: int = 62051,
+        usage_coefficient: float = 1.0,
+    ) -> dict[str, Any]:
+        """
+        Зарегистрировать ноду в панели.
+
+        Нода должна быть уже запущена с сертификатом этой панели, иначе
+        она подключится, но останется в статусе error.
+        """
+        payload = {
+            "name": name,
+            "address": address,
+            "port": port,
+            "api_port": api_port,
+            "usage_coefficient": usage_coefficient,
+            "add_as_new_host": False,
+        }
+        return await self._request("POST", "/api/node", json=payload)
 
     async def reconnect_node(self, node_id: int) -> None:
         await self._request("POST", f"/api/node/{node_id}/reconnect")
@@ -241,6 +307,42 @@ class MarzbanClient:
 
     async def get_system_stats(self) -> dict[str, Any]:
         return await self._request("GET", "/api/system") or {}
+
+
+def subscription_path_of(subscription_url: str) -> str | None:
+    """
+    Оставить от ссылки подписки только путь.
+
+    Когда панели задан XRAY_SUBSCRIPTION_URL_PREFIX (а он задан: клиенты
+    должны получать наш домен), она возвращает в subscription_url полный
+    адрес. Приклеивать его к внутреннему адресу панели нельзя — получается
+    строка вида http://marzban:8080https://... и запрос падает.
+    """
+    if not subscription_url:
+        return None
+    parts = urlsplit(subscription_url)
+    path = parts.path
+    if not path:
+        return None
+    return f"{path}?{parts.query}" if parts.query else path
+
+
+def filter_available(
+    wanted: dict[str, list[str]], available: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    """
+    Оставить только те теги, которые действительно есть в панели.
+
+    Мы просим VLESS, Hysteria2 и Shadowsocks, но на ноде может быть поднят
+    только VLESS. Без этой фильтрации создание пользователя падает целиком —
+    лучше выдать ключ с тем, что есть.
+    """
+    result: dict[str, list[str]] = {}
+    for protocol, tags in wanted.items():
+        existing = [tag for tag in tags if tag in available.get(protocol, [])]
+        if existing:
+            result[protocol] = existing
+    return result
 
 
 def build_inbounds(location_codes: list[str], node_codes: list[str]) -> dict[str, list[str]]:

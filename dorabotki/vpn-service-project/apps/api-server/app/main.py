@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import marzban as marzban_module
 from app.config import PROJECT_ROOT, get_settings, tariff_by_code
 from app.db import close_connections, get_redis, get_session
 from app.marzban import MarzbanClient, MarzbanError
@@ -51,6 +52,15 @@ MINIAPP_DIR = Path(os.getenv("MINIAPP_DIR") or PROJECT_ROOT / "apps" / "client-a
 async def lifespan(app: FastAPI):
     setup_logging("api")
     log.info("API запущен (env=%s)", settings.env)
+    # Заводские секреты в боевом сервисе — открытая дверь. Не роняем
+    # процесс (иначе один забытый ключ кладёт весь сервис), но говорим
+    # об этом громко: та же проверка есть в `python -m app.cli doctor`.
+    insecure = settings.insecure_defaults()
+    if insecure:
+        log.warning(
+            "Не заменены секреты в .env: %s. Замените их: openssl rand -hex 32",
+            ", ".join(insecure),
+        )
     yield
     await close_connections()
 
@@ -151,16 +161,26 @@ async def subscription(token: str, request: Request, session: AsyncSession = Dep
 
     try:
         async with MarzbanClient() as mz:
-            path = await mz.get_subscription_path(user.marzban_username)
+            panel_user = await mz.get_user(user.marzban_username)
 
-            # Аккаунта в панели может не быть: например, подписку выдали,
-            # когда панель ещё не работала. Чиним на месте, а не отдаём ошибку
-            if path is None:
-                log.info("Аккаунт %s отсутствует в панели — создаю", user.marzban_username)
+            # Панель могла не получить то, что мы уже записали у себя:
+            # аккаунта нет вовсе (подписку выдали, пока панель лежала)
+            # либо в нём остался старый срок (оплата прошла, а синхронизация
+            # нет — деньги зачтены, доступа нет). Чиним на месте, а не
+            # отдаём ошибку: клиент дёргает эту ссылку каждые 6 часов,
+            # поэтому расхождение само себя лечит.
+            if sub_service.panel_is_stale(panel_user, subscription_obj):
+                log.warning(
+                    "Аккаунт %s в панели расходится с базой — синхронизирую",
+                    user.marzban_username,
+                )
                 await sub_service.sync_to_marzban(session, user, subscription_obj)
-                path = await mz.get_subscription_path(user.marzban_username)
+                panel_user = await mz.get_user(user.marzban_username)
 
-            if path is None:
+            path = marzban_module.subscription_path_of(
+                (panel_user or {}).get("subscription_url") or ""
+            )
+            if not path:
                 raise HTTPException(status_code=404, detail="Subscription not found")
 
             marzban_url = f"{settings.marzban_base_url.rstrip('/')}{path}"

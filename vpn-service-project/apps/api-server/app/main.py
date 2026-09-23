@@ -6,6 +6,7 @@ FastAPI-приложение: вебхуки платежей, ссылка-по
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -19,8 +20,10 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import marzban as marzban_module
 from app.config import PROJECT_ROOT, get_settings, tariff_by_code
 from app.db import close_connections, get_redis, get_session
+from app.marzban import MarzbanClient, MarzbanError
 from app.models import Payment, User
 from app.payments.registry import get_provider
 from app.schemas import (
@@ -49,6 +52,15 @@ MINIAPP_DIR = Path(os.getenv("MINIAPP_DIR") or PROJECT_ROOT / "apps" / "client-a
 async def lifespan(app: FastAPI):
     setup_logging("api")
     log.info("API запущен (env=%s)", settings.env)
+    # Заводские секреты в боевом сервисе — открытая дверь. Не роняем
+    # процесс (иначе один забытый ключ кладёт весь сервис), но говорим
+    # об этом громко: та же проверка есть в `python -m app.cli doctor`.
+    insecure = settings.insecure_defaults()
+    if insecure:
+        log.warning(
+            "Не заменены секреты в .env: %s. Замените их: openssl rand -hex 32",
+            ", ".join(insecure),
+        )
     yield
     await close_connections()
 
@@ -71,13 +83,17 @@ if MINIAPP_DIR.exists():
 
 @app.get("/health")
 async def health() -> dict:
-    """Проверка живости для мониторинга и Docker healthcheck."""
-    db_ok = redis_ok = True
-    try:
-        redis = get_redis()
-        await redis.ping()
-    except Exception:
-        redis_ok = False
+    """
+    Проверка живости для мониторинга и Docker healthcheck.
+
+    В локальном режиме Redis не используется (состояния бота живут в памяти),
+    поэтому его отсутствие не считается проблемой — иначе сервис вечно
+    рапортовал бы degraded и мониторинг звонил бы впустую.
+    """
+    db_ok = True
+    redis_ok = False
+    redis_required = not settings.local_mode
+
     try:
         from app.db import engine
 
@@ -86,8 +102,20 @@ async def health() -> dict:
     except Exception:
         db_ok = False
 
-    status = "ok" if db_ok and redis_ok else "degraded"
-    return {"status": status, "db": db_ok, "redis": redis_ok}
+    if redis_required:
+        try:
+            await get_redis().ping()
+            redis_ok = True
+        except Exception:
+            redis_ok = False
+
+    healthy = db_ok and (redis_ok or not redis_required)
+    return {
+        "status": "ok" if healthy else "degraded",
+        "mode": "local" if settings.local_mode else "production",
+        "db": db_ok,
+        "redis": redis_ok if redis_required else "not_used",
+    }
 
 
 # ── Ссылка-подписка ────────────────────────────────────────────────────────
@@ -99,8 +127,8 @@ async def subscription(token: str, request: Request, session: AsyncSession = Dep
     Отдать клиенту актуальные конфиги.
 
     Это сердце Dynamic Subscription: ссылка у пользователя постоянная,
-    а содержимое собирается на лету из панели. Поэтому смена ноды,
-    порта или SNI (в том числе автоматическая) доезжает до всех клиентов
+    а содержимое собирается на лету из панели. Поэтому смена ноды, порта
+    или SNI (в том числе автоматическая) доезжает до всех клиентов
     без перевыпуска ключей.
     """
     result = await session.execute(select(User).where(User.subscription_token == token))
@@ -108,30 +136,84 @@ async def subscription(token: str, request: Request, session: AsyncSession = Dep
     if user is None:
         raise HTTPException(status_code=404, detail="Not found")
 
-    marzban_url = f"{settings.marzban_base_url.rstrip('/')}/sub/{user.marzban_username}"
-    headers = {"User-Agent": request.headers.get("user-agent", "")}
+    # Имя профиля в приложении. Кириллица и эмодзи в заголовках HTTP
+    # запрещены, поэтому клиенты договорились о префиксе base64:
+    title = base64.b64encode(settings.service_name.encode()).decode()
+
+    subscription_obj = user.subscription
+    if subscription_obj is None or not subscription_obj.is_active:
+        # Подписка кончилась: приложению отдаём пустой список конфигов,
+        # чтобы оно показало понятный статус, а не ошибку сети
+        return PlainTextResponse(
+            content="",
+            status_code=200,
+            headers={
+                "profile-title": f"base64:{title}",
+                "profile-update-interval": "6",
+                # Кириллица в заголовках HTTP запрещена (latin-1),
+                # поэтому текст тоже уходит в base64 — клиенты это понимают
+                "announce": "base64:"
+                + base64.b64encode(
+                    "Подписка закончилась. Продлите её в боте — ключ останется прежним.".encode()
+                ).decode(),
+            },
+        )
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(marzban_url, headers=headers)
-    except httpx.HTTPError as err:
+        async with MarzbanClient() as mz:
+            panel_user = await mz.get_user(user.marzban_username)
+
+            # Панель могла не получить то, что мы уже записали у себя:
+            # аккаунта нет вовсе (подписку выдали, пока панель лежала)
+            # либо в нём остался старый срок (оплата прошла, а синхронизация
+            # нет — деньги зачтены, доступа нет). Чиним на месте, а не
+            # отдаём ошибку: клиент дёргает эту ссылку каждые 6 часов,
+            # поэтому расхождение само себя лечит.
+            if sub_service.panel_is_stale(panel_user, subscription_obj):
+                log.warning(
+                    "Аккаунт %s в панели расходится с базой — синхронизирую",
+                    user.marzban_username,
+                )
+                await sub_service.sync_to_marzban(session, user, subscription_obj)
+                panel_user = await mz.get_user(user.marzban_username)
+
+            path = marzban_module.subscription_path_of(
+                (panel_user or {}).get("subscription_url") or ""
+            )
+            if not path:
+                raise HTTPException(status_code=404, detail="Subscription not found")
+
+            marzban_url = f"{settings.marzban_base_url.rstrip('/')}{path}"
+            resp = await mz._client.get(
+                marzban_url, headers={"User-Agent": request.headers.get("user-agent", "")}
+            )
+    except MarzbanError as err:
         log.error("Панель недоступна при отдаче подписки: %s", err)
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable") from err
+    except httpx.HTTPError as err:
+        log.error("Ошибка получения подписки: %s", err)
         raise HTTPException(status_code=503, detail="Service temporarily unavailable") from err
 
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
 
-    return PlainTextResponse(
-        content=resp.text,
-        status_code=resp.status_code,
-        headers={
-            "Content-Type": resp.headers.get("content-type", "text/plain; charset=utf-8"),
-            # Подсказка приложению, как часто обновлять подписку
-            "Subscription-Userinfo": resp.headers.get("subscription-userinfo", ""),
-            "Profile-Update-Interval": "6",
-            "Profile-Title": "VPN Service",
-        },
-    )
+    headers = {
+        "Content-Type": resp.headers.get("content-type", "text/plain; charset=utf-8"),
+        "profile-title": f"base64:{title}",
+        # Как часто приложение перечитывает подписку. Ради этого
+        # и работает Auto-Healing: смена ноды доезжает сама
+        "profile-update-interval": "6",
+        "profile-web-page-url": settings.public_base_url,
+    }
+
+    # Остаток трафика и дата окончания — приложение покажет их в карточке
+    userinfo = resp.headers.get("subscription-userinfo")
+    if userinfo:
+        headers["subscription-userinfo"] = userinfo
+    if settings.support_username:
+        headers["support-url"] = f"https://t.me/{settings.support_username}"
+
+    return PlainTextResponse(content=resp.text, status_code=resp.status_code, headers=headers)
 
 
 # ── Страница импорта подписки в приложение ─────────────────────────────────
@@ -141,30 +223,52 @@ IMPORT_PAGE = """<!DOCTYPE html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Подключение VPN</title>
 <style>
+ :root{{color-scheme:dark}}
+ *{{box-sizing:border-box}}
  body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-      background:#0f172a;color:#e2e8f0;margin:0;padding:32px 20px;text-align:center}}
- h1{{font-size:20px;margin:0 0 8px}} p{{color:#94a3b8;font-size:14px;line-height:1.5}}
- .a{{display:block;background:#2481cc;color:#fff;text-decoration:none;padding:16px;
-     border-radius:12px;font-weight:600;margin:10px auto;max-width:420px}}
- .g{{background:#1e293b;color:#e2e8f0}}
- code{{display:block;background:#1e293b;padding:12px;border-radius:10px;
-       word-break:break-all;font-size:12px;margin:16px auto;max-width:420px}}
+      background:#0b1220;color:#e2e8f0;margin:0;padding:40px 20px;text-align:center}}
+ .card{{background:#131c2e;border:1px solid #1e2b45;border-radius:20px;
+        max-width:460px;margin:0 auto;padding:32px 24px}}
+ .rocket{{font-size:44px;line-height:1;margin-bottom:12px}}
+ h1{{font-size:21px;margin:0 0 8px}}
+ .sub{{color:#4ade80;font-size:14px;margin:0 0 22px}}
+ .a{{display:block;background:#2563eb;color:#fff;text-decoration:none;padding:15px;
+     border-radius:12px;font-weight:600;margin:10px 0}}
+ .g{{background:#1e293b;color:#cbd5e1;font-weight:500}}
+ details{{margin-top:18px;text-align:left}}
+ summary{{cursor:pointer;color:#94a3b8;font-size:14px;padding:8px 0}}
+ p{{color:#94a3b8;font-size:13px;line-height:1.55}}
+ code{{display:block;background:#0b1220;border:1px solid #1e2b45;padding:12px;
+       border-radius:10px;word-break:break-all;font-size:11px;color:#cbd5e1;margin-top:8px}}
+ .hint{{margin-top:20px;font-size:12px;color:#64748b}}
 </style></head><body>
-<h1>⚡ Подключаем VPN</h1>
-<p>Сейчас откроется приложение и добавит подписку.<br>
-Если этого не произошло — выберите приложение вручную.</p>
-<a class="a" href="happ://import/{sub}">Открыть в Happ</a>
-<a class="a g" href="hiddify://import/{sub_enc}">Открыть в Hiddify</a>
-<a class="a g" href="v2raytun://import/{sub}">Открыть в v2RayTun</a>
-<a class="a g" href="streisand://import/{sub_enc}">Открыть в Streisand (iOS)</a>
-<p>Приложения ещё нет? Установите Happ:<br>
-<a style="color:#60a5fa" href="{ios}">App Store</a> ·
-<a style="color:#60a5fa" href="{android}">Google Play</a></p>
-<p>Ссылка-подписка (для ручного добавления):</p>
-<code>{sub}</code>
+<div class="card">
+  <div class="rocket">🚀</div>
+  <h1>Открываем Happ…</h1>
+  <p class="sub">Подтвердите открытие приложения</p>
+
+  <a class="a" href="{first}">Перейти в Happ</a>
+
+  <details>
+    <summary>Не открылось или другое приложение</summary>
+    <a class="a g" href="{happ_b64}">Happ (запасной формат)</a>
+    <a class="a g" href="hiddify://import/{sub_enc}">Hiddify</a>
+    <a class="a g" href="v2raytun://import/{sub}">v2RayTun</a>
+    <a class="a g" href="streisand://import/{sub_enc}">Streisand (iOS)</a>
+    <p>Приложения ещё нет?
+      <a style="color:#60a5fa" href="{ios}">App Store</a> ·
+      <a style="color:#60a5fa" href="{android}">Google Play</a>
+    </p>
+    <p>Ссылка-подписка для ручного добавления:<code>{sub}</code></p>
+  </details>
+
+  <p class="hint">Ссылка постоянная: серверы могут меняться — ключ остаётся прежним.</p>
+</div>
 <script>
- // Пробуем открыть приложение сразу: на телефоне это экономит один тап
- setTimeout(function(){{ location.href = "{first}"; }}, 400);
+ // На телефоне открываем приложение сразу: это экономит один тап.
+ // Небольшая задержка нужна, чтобы страница успела отрисоваться —
+ // иначе при отсутствии приложения человек увидит пустой экран.
+ setTimeout(function(){{ location.href = "{first}"; }}, 600);
 </script>
 </body></html>"""
 
@@ -191,6 +295,7 @@ async def import_page(token: str, app: str = "happ", session: AsyncSession = Dep
             sub=sub_url,
             sub_enc=quote(sub_url, safe=""),
             first=links.get(app, links["happ"]),
+            happ_b64=links["happ_base64"],
             ios=deeplink.APP_STORES["happ_ios"],
             android=deeplink.APP_STORES["happ_android"],
         )
@@ -362,6 +467,7 @@ async def miniapp_me(
         },
         "subscription": subscription_info,
         "subscription_url": sub_url,
+        "import_url": deeplink.import_page(sub_url),
         "deeplinks": deeplink.all_links(sub_url),
         "referrals": stats,
         "personal_offer": (

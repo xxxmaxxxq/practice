@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from redis.asyncio import Redis
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
@@ -27,7 +28,10 @@ def _engine_kwargs() -> dict:
     применяются только к Postgres — иначе локальный запуск падает с ошибкой.
     """
     if settings.local_mode:
-        return {"echo": False}
+        # Бот и API — разные процессы, а файл базы один. Увеличенный таймаут
+        # плюс журнал WAL (включается ниже) позволяют им писать одновременно
+        # без ошибки "database is locked".
+        return {"echo": False, "connect_args": {"timeout": 30}}
     return {
         "echo": False,
         "pool_size": 20,  # запас на 1000 пользователей с большим запасом
@@ -38,6 +42,23 @@ def _engine_kwargs() -> dict:
 
 
 engine = create_async_engine(settings.database_url, **_engine_kwargs())
+
+if settings.local_mode:
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _record) -> None:
+        """
+        Режим WAL: читатели не блокируют писателя.
+
+        Нужен, когда в локальном режиме подняты сразу бот и API — иначе
+        второй процесс падает на "database is locked".
+        """
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
 
 SessionFactory = async_sessionmaker(
     engine,

@@ -2,11 +2,22 @@
 
 from aiogram import Router
 
-from app.bot.handlers import account, admin, buy, connect, pause, referral, start, support
+from app.bot.handlers import (
+    account,
+    admin,
+    buy,
+    connect,
+    menu,
+    pause,
+    referral,
+    start,
+    support,
+)
 
 router = Router(name="root")
 router.include_router(admin.router)
 router.include_router(start.router)
+router.include_router(menu.router)
 router.include_router(connect.router)
 router.include_router(account.router)
 router.include_router(buy.router)
