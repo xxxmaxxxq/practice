@@ -324,6 +324,18 @@ async def _process_webhook(provider_code: str, request: Request, session: AsyncS
     if not parsed.is_paid:
         return {"ok": True, "ignored": "not_paid"}
 
+    # Уведомление без подписи (ЮKassa) само по себе ничего не доказывает:
+    # провайдер переспрашивается по своему API, и только его ответ —
+    # основание начислить дни. Провайдеры с honest-подписью вернут None.
+    confirmed = await provider.confirm_payment(parsed.external_id)
+    if confirmed is False:
+        log.warning(
+            "Вебхук %s: провайдер не подтвердил платёж ext=%s — начисление отменено",
+            provider_code,
+            parsed.external_id,
+        )
+        raise HTTPException(status_code=400, detail="Payment not confirmed by provider")
+
     payment: Payment | None = None
     if parsed.our_payment_id:
         payment = await session.get(Payment, parsed.our_payment_id)
@@ -336,6 +348,22 @@ async def _process_webhook(provider_code: str, request: Request, session: AsyncS
         log.error("Вебхук %s: платёж не найден (ext=%s)", provider_code, parsed.external_id)
         # Возвращаем 200, чтобы провайдер не долбил повторами вечно
         return {"ok": True, "ignored": "payment_not_found"}
+
+    # Счёт у провайдера и наш заказ должны быть одной и той же покупкой.
+    # Иначе остаётся лазейка: прислать уведомление с настоящим id дешёвого
+    # оплаченного счёта, а в metadata подставить чужой дорогой заказ —
+    # провайдер такой платёж честно подтвердит, ведь он и правда оплачен.
+    # external_id мы записываем в момент выставления счёта, так что
+    # подмену видно сразу.
+    if not billing.invoice_belongs_to_payment(payment.external_id, parsed.external_id):
+        log.error(
+            "Вебхук %s: счёт %s не принадлежит платежу #%s (ожидался %s)",
+            provider_code,
+            parsed.external_id,
+            payment.id,
+            payment.external_id,
+        )
+        raise HTTPException(status_code=400, detail="Payment mismatch")
 
     result = await billing.apply_payment(session, payment, parsed.external_id, parsed.raw)
     if result.get("already_processed"):
@@ -356,6 +384,11 @@ async def _process_webhook(provider_code: str, request: Request, session: AsyncS
 @app.post("/webhook/platega")
 async def webhook_platega(request: Request, session: AsyncSession = Depends(get_session)):
     return await _process_webhook("platega", request, session)
+
+
+@app.post("/webhook/yookassa")
+async def webhook_yookassa(request: Request, session: AsyncSession = Depends(get_session)):
+    return await _process_webhook("yookassa", request, session)
 
 
 @app.post("/webhook/cryptopay")

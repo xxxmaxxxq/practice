@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     platega_api_url: str = "https://app.platega.io"
     platega_webhook_secret: str = ""
 
+    # ЮKassa — СБП для самозанятых, чек уходит в ФНС автоматически
+    yookassa_enabled: bool = False
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
+    yookassa_api_url: str = "https://api.yookassa.ru/v3"
+    # Почта для чека. Пустая — чек не запрашивается, пробивать вручную
+    yookassa_receipt_email: str = ""
+
     cryptopay_enabled: bool = False
     cryptopay_token: str = ""
     cryptopay_api_url: str = "https://pay.crypt.bot/api"

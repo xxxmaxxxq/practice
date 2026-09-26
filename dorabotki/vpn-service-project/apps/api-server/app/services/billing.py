@@ -225,6 +225,23 @@ async def _has_paid_before(session: AsyncSession, user: User) -> bool:
     return result.first() is not None
 
 
+def invoice_belongs_to_payment(stored_external_id: str | None, webhook_external_id: str) -> bool:
+    """
+    Тот ли это счёт, который мы выставляли под этот заказ.
+
+    external_id записывается в момент создания счёта. Если уведомление
+    принесло другой — это не наш платёж: кто-то подставил id настоящей,
+    но чужой (и, скорее всего, куда более дешёвой) оплаты.
+
+    Пустой stored_external_id означает, что записать его не успели
+    (оборвалась связь сразу после выставления счёта) — тогда сверять
+    нечего и платёж ищется по external_id из уведомления.
+    """
+    if not stored_external_id or not webhook_external_id:
+        return True
+    return stored_external_id == webhook_external_id
+
+
 async def find_payment_by_external_id(
     session: AsyncSession, provider: str, external_id: str
 ) -> Payment | None:

@@ -6,8 +6,10 @@ from app.payments.base import PaymentProvider
 from app.payments.cryptopay import CryptoPayProvider
 from app.payments.platega import PlategaProvider
 from app.payments.stars import StarsProvider
+from app.payments.yookassa import YooKassaProvider
 
 _PROVIDERS: dict[str, PaymentProvider] = {
+    YooKassaProvider.code: YooKassaProvider(),
     PlategaProvider.code: PlategaProvider(),
     CryptoPayProvider.code: CryptoPayProvider(),
     StarsProvider.code: StarsProvider(),
