@@ -55,6 +55,10 @@ def _requisites_block() -> str:
         rows.append(("Телефон", settings.owner_phone))
     if settings.owner_address:
         rows.append(("Почтовый адрес", settings.owner_address))
+    # Телеграм — рабочий канал поддержки, а не замена почте и телефону:
+    # он идёт дополнением, чтобы у покупателя был быстрый способ связи
+    if settings.support_username:
+        rows.append(("Поддержка в Telegram", f"@{settings.support_username}"))
 
     cells = "".join(
         f"<div class='req-row'><span>{_esc(name)}</span><b>{_esc(value)}</b></div>"
@@ -232,6 +236,11 @@ def landing_html() -> str:
 </p>
 
 <h2>Контакты и реквизиты</h2>
+<p>
+  По любым вопросам — оплата, возврат,технические неполадки — пишите
+  на электронную почту или в Telegram. Отвечаем ежедневно с 10:00 до
+  22:00 по московскому времени, обычно в течение часа.
+</p>
 {_requisites_block()}
 
 <a class="btn" href="https://t.me/{bot}">Открыть бота и попробовать бесплатно</a>"""
