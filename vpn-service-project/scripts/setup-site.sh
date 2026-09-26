@@ -45,7 +45,10 @@ done
 
 # ── 1. Найти проект ────────────────────────────────────────────────────────
 log "Ищу каталог проекта…"
+# dorabotki — копия проекта, а не рабочий каталог: если взять её,
+# правки уедут не туда, а git pull упрётся в изменённые файлы
 FOUND="$(find / -name deploy-master.sh -path '*/scripts/*' \
+          -not -path '*/dorabotki/*' \
           -not -path '/proc/*' -not -path '/sys/*' 2>/dev/null | head -1 || true)"
 
 if [[ -z "$FOUND" ]]; then
@@ -62,14 +65,22 @@ log "Проект: $PROJECT_DIR"
 # ── 2. Свежий код ──────────────────────────────────────────────────────────
 log "Подтягиваю свежий код из ветки $BRANCH…"
 cd "$REPO_DIR"
+
+# На сервере в рабочем дереве могли остаться следы ручного копирования
+# из dorabotki: git тогда отказывается сливать, чтобы не затереть их.
+# Убираем их в stash, а не через reset --hard: если среди них окажется
+# что-то нужное, оно достаётся обратно через `git stash pop`.
+# .env и config/generated лежат в .gitignore, их stash не трогает.
+if [[ -n "$(git status --porcelain)" ]]; then
+    warn "В рабочем дереве есть изменения — убираю их в stash"
+    git stash push --include-untracked \
+        --message "автосохранение перед выкаткой сайта $(date +%F_%T)" >/dev/null
+    log "  вернуть при необходимости: cd $REPO_DIR && git stash pop"
+fi
+
 git fetch origin "$BRANCH"
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
-git pull origin "$BRANCH"
-
-# Доработки лежат отдельной папкой и переносятся в основную
-if [[ -d "$REPO_DIR/dorabotki/vpn-service-project" ]]; then
-    cp -r "$REPO_DIR/dorabotki/vpn-service-project/." "$PROJECT_DIR/"
-fi
+git merge --ff-only "origin/$BRANCH" 2>/dev/null || git pull origin "$BRANCH"
 
 # ── 3. Реквизиты в .env ────────────────────────────────────────────────────
 ENV_FILE="$PROJECT_DIR/.env"
