@@ -110,6 +110,15 @@ class Settings(BaseSettings):
     stars_enabled: bool = True
     stars_rub_per_star: float = 1.7
 
+    # ── Реквизиты владельца (для сайта и оферты) ───────────────────────────
+    # Живут в .env, а не в репозитории: это персональные данные.
+    # Без них ЮKassa не пропустит сайт на модерации.
+    owner_full_name: str = ""
+    owner_inn: str = ""
+    owner_email: str = ""
+    owner_phone: str = ""
+    owner_address: str = ""
+
     # ── Безопасность ───────────────────────────────────────────────────────
     jwt_secret: str = "change_me"
     api_internal_token: str = "change_me"
@@ -154,6 +163,21 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.env.lower() == "production"
+
+    def missing_requisites(self) -> list[str]:
+        """
+        Чего не хватает сайту для модерации в платёжной системе.
+
+        ЮKassa проверяет, что на сайте есть ФИО и ИНН самозанятого и
+        способ связи. Пока список не пуст, страница показывает заглушку
+        вместо реквизитов — лучше честный пропуск, чем выдуманные данные.
+        """
+        fields = {
+            "OWNER_FULL_NAME": self.owner_full_name,
+            "OWNER_INN": self.owner_inn,
+            "OWNER_EMAIL": self.owner_email,
+        }
+        return sorted(name for name, value in fields.items() if not value.strip())
 
     def insecure_defaults(self) -> list[str]:
         """

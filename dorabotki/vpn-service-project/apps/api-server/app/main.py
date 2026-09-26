@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import marzban as marzban_module
+from app import site
 from app.config import PROJECT_ROOT, get_settings, tariff_by_code
 from app.db import close_connections, get_redis, get_session
 from app.marzban import MarzbanClient, MarzbanError
@@ -421,6 +422,24 @@ async def webhook_telegram(
 
 
 # ── Mini App ───────────────────────────────────────────────────────────────
+
+
+@app.get("/", response_class=HTMLResponse)
+async def landing():
+    """
+    Витрина сервиса.
+
+    Нужна не только людям: платёжные системы не включают приём оплаты,
+    пока не увидят страницу с описанием услуги, ценами, офертой и
+    реквизитами. Раньше корень домена отдавал 404.
+    """
+    return HTMLResponse(site.landing_html())
+
+
+@app.get("/offer", response_class=HTMLResponse)
+async def offer():
+    """Публичная оферта — на неё ссылается витрина и требует модерация."""
+    return HTMLResponse(site.offer_html())
 
 
 @app.get("/app", response_class=HTMLResponse)
