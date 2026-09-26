@@ -16,7 +16,11 @@ Thumbs.db
 *.pem
 *.ovpn
 config/live/
-config/generated/          # ключи Reality и собранный конфиг Xray
+# Ключи Reality и собранный конфиг Xray.
+# Комментарий отдельной строкой: git считает комментарием только строку,
+# начинающуюся с #, а в конце шаблона он стал бы частью самого шаблона —
+# правило перестало бы совпадать, и приватные ключи попали бы в репозиторий.
+config/generated/
 config/**/*.private.json
 xray_keys.txt
 reality_keys.txt

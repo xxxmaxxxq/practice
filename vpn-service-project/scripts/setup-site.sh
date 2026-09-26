@@ -71,6 +71,18 @@ cd "$REPO_DIR"
 # Убираем их в stash, а не через reset --hard: если среди них окажется
 # что-то нужное, оно достаётся обратно через `git stash pop`.
 # .env и config/generated лежат в .gitignore, их stash не трогает.
+# Ключи Reality уносим в сторону до всяких git-операций. В старых версиях
+# .gitignore правило на config/generated/ не срабатывало (комментарий стоял
+# в конце строки и становился частью шаблона), поэтому stash забирал ключи
+# вместе с остальным. Потеря ключей — это новые ключи при следующей сборке
+# конфига и разом отвалившиеся подписки у всех, кто уже платит.
+SAFE_DIR="$(mktemp -d)"
+if [[ -d "$PROJECT_DIR/config/generated" ]]; then
+    cp -a "$PROJECT_DIR/config/generated" "$SAFE_DIR/generated"
+    log "Ключи Reality сохранены в $SAFE_DIR"
+fi
+[[ -f "$PROJECT_DIR/.env" ]] && cp -a "$PROJECT_DIR/.env" "$SAFE_DIR/.env"
+
 if [[ -n "$(git status --porcelain)" ]]; then
     warn "В рабочем дереве есть изменения — убираю их в stash"
     git stash push --include-untracked \
@@ -81,6 +93,17 @@ fi
 git fetch origin "$BRANCH"
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
 git merge --ff-only "origin/$BRANCH" 2>/dev/null || git pull origin "$BRANCH"
+
+# Возвращаем то, что не должно было уехать вместе с кодом
+if [[ -d "$SAFE_DIR/generated" ]]; then
+    mkdir -p "$PROJECT_DIR/config"
+    cp -a "$SAFE_DIR/generated/." "$PROJECT_DIR/config/generated/"
+    log "Ключи Reality возвращены на место"
+fi
+if [[ -f "$SAFE_DIR/.env" && ! -f "$PROJECT_DIR/.env" ]]; then
+    cp -a "$SAFE_DIR/.env" "$PROJECT_DIR/.env"
+    log ".env возвращён на место"
+fi
 
 # ── 3. Реквизиты в .env ────────────────────────────────────────────────────
 ENV_FILE="$PROJECT_DIR/.env"
